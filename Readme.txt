@@ -1,0 +1,1 @@
+Rust implementation of a variant of the Artificial Bee Colony (Karaboga  et al.) search/optimization algorithm. 
