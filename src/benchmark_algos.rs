@@ -5,7 +5,7 @@
 use std::f64::consts::E;
 use std::f64::consts::PI;
 
-/// ONE global minimum of f(x)=0 at x=(0,...0)
+/// Unimodal. ONE global minimum of f(x)=0 at x=(0,...0)
 ///
 /// Boundary values: `[-32.768, 32.768]` over all dimensions.
 pub fn ackley(v: &Vec<f64>) -> f64 {
@@ -17,7 +17,7 @@ pub fn ackley(v: &Vec<f64>) -> f64 {
 
 ///n-dimensional, Range = `[-10,10]`
 ///
-///Global Minimun of f(x)=0 at x=(0,0,...0)
+///Multimodal. Global Minimun of f(x)=0 at x=(0,0,...0)
 pub fn alpine_1(v: &Vec<f64>) -> f64 {
     v.iter().map(|x| ((x * x.sin() + (0.1 * x)).abs())).sum()
 }
@@ -70,6 +70,21 @@ pub fn bukin_6(v: &Vec<f64>) -> f64 {
     (100.0 * (v[1] - (0.01 * v[0].powi(2))).abs().sqrt()) + (0.01 * (v[0] + 10.0).abs())
 }
 
+///2 dimensions only, multimodal.
+///
+///Evaluated on the `[-10, 10]`, for x1 and x2.
+///
+///Global minima of f(x)=-2.0621 at (-1.34941, -1.34941), (-1.34941, 1.34941), (1.34941, -1.34941), (1.34941, 1.34941)
+pub fn cross_in_tray(v: &Vec<f64>) -> f64 {
+    let (x1, x2) = (v[0], v[1]);
+    -0.0001
+        * (((x1.sin() * x2.sin())
+            * (((100.0 - (((v[0].powi(2) + v[1].powi(2)).sqrt()) / PI)).abs()).exp()))
+        .abs()
+            + 1.0)
+            .powf(0.1)
+}
+
 /// Global minimum of -1 if either variable =0. Range = `[-10,10]`
 ///
 ///2 Dimensional ONLY.
@@ -82,7 +97,7 @@ pub fn cross_leg_table(v: &Vec<f64>) -> f64 {
         .powf(-0.1)
 }
 
-///Multimodal, 2D only. 
+///Multimodal, 2D only.
 ///
 ///Minimum of f(x)=-1 at x=(0,0). Range = -5.12,5.12
 pub fn drop_wave(v: &Vec<f64>) -> f64 {
@@ -116,6 +131,21 @@ pub fn egg_holder(v: &Vec<f64>) -> f64 {
     result
 }
 
+///Range = `[-2,2]`. 2 dimensional.
+///
+///Optimal point location=`[0,-1]`, optimal value = 3.0
+pub fn goldstein_price(v: &Vec<f64>) -> f64 {
+    let (x1, x2) = (v[0], v[1]);
+    (1.0 + ((x1 + x2 + 1.0).powi(2)
+        * (19.0 - (14.0 * x1) + (3.0 * x1.powi(2)) - (14.0 * x2)
+            + (6.0 * x1 * x2)
+            + (3.0 * x2.powi(2)))))
+        * (30.0
+            + (((2.0 * x1) - (3.0 * x2)).powi(2)
+                * (18.0 - (32.0 * x1) + (12.0 * x1.powi(2)) + (48.0 * x2) - (36.0 * x1 * x2)
+                    + (27.0 * x2.powi(2)))))
+}
+
 ///Range = `[-600,600]`
 ///
 ///Optimal point location=`[0,0,...0]`, optimal value = 0.0
@@ -145,7 +175,7 @@ pub fn himmelblau(v: &Vec<f64>) -> f64 {
 
 ///N-dimensional, multimodal, Range = `[0,10]`
 ///
-///Location of minimum for n=4 = (3.065318, 1.531047, 0.405617, 0.393987), Minimum point = -0.6222807 
+///Location of minimum for n=4 = (3.065318, 1.531047, 0.405617, 0.393987), Minimum point = -0.6222807
 ///
 ///Location of minimum for n=3 = (3.042963, 1.482875, 0.166211), Minimum point = -0.5157855
 pub fn keane(v: &Vec<f64>) -> f64 {
@@ -168,6 +198,22 @@ pub fn levy13(v: &Vec<f64>) -> f64 {
     (3.0 * PI * x).sin().powi(2)
         + ((x - 1.0).powi(2) * (1.0 + (3.0 * PI * y).sin().powi(2)))
         + ((y - 1.0).powi(2) * (1.0 + (2.0 * PI * y).sin().powi(2)))
+}
+
+///2 dimensions only. Evaluated on `[-10,10]` on all dimensions.
+///
+///Minimum of 0.0 at (0.0,0.0)
+pub fn matyas(v: &Vec<f64>) -> f64 {
+    let (x1, x2) = (v[0], v[1]);
+    (0.26 * (x1.powi(2) + x2.powi(2))) - (0.48 * (x1 * x2))
+}
+
+///2 dimensions only. Evaluated on `[-1.5,4.0]` for x1, and `[-3.0,4.0]` on all dimensions.
+///
+///Minimum of -1.9132 at (-0.54719,-1.54719)
+pub fn mccormick(v: &Vec<f64>) -> f64 {
+    let (x1, x2) = (v[0], v[1]);
+    (x1 + x2).sin() + (x1 - x2).powi(2) - (1.5 * x1) + (2.5 * x2) + 1.0
 }
 
 /// N-dimensional, multimodal. Range = `[0,pi]`
@@ -215,9 +261,7 @@ pub fn penalized1(v: &Vec<f64>) -> f64 {
         })
         .sum::<f64>();
 
-    const1
-        * (const2 + sum1)
-        + sum2
+    const1 * (const2 + sum1) + sum2
 }
 
 ///k=100,a=5,m=4
@@ -292,13 +336,21 @@ pub fn rosenbrock(v: &Vec<f64>) -> f64 {
     results
 }
 
-
 ///One global minimum of f(x)=0 at x=(0,0,...0). Range: `[-100,100]` in n dimensions.
 ///
 ///Source: <https://www.researchgate.net/publication/316804716_Hybrid_genetic_deflated_Newton_method_for_global_optimisation#pf9>
 pub fn schaffer6(v: &Vec<f64>) -> f64 {
     let sum_all: f64 = v.iter().map(|x| x.powi(2)).sum();
     -0.5 - (((sum_all).sin().powi(2) - 0.5) / (1.0 + (0.001 * sum_all.powi(2))).powi(2))
+}
+
+/// Range = `[-500,5500]`
+///
+/// Multimodal. Global minimum of 0 when xi=(420.9687,420.9687,420.9687,...420.9687) for all xi
+///
+/// Generalized to n-dimensions
+pub fn schwefel(v: &Vec<f64>) -> f64 {
+    418.9829 * (v.len() as f64) - v.iter().map(|x| x * x.abs().sqrt().sin()).sum::<f64>()
 }
 
 /// Range = `[-100,100]`
@@ -320,7 +372,7 @@ pub fn schwefel12(v: &Vec<f64>) -> f64 {
     results
 }
 
-///Generalized to n dimensions. Range= `[-500,500]` for each dimension. 
+///Generalized to n dimensions. Range= `[-500,500]` for each dimension.
 ///
 ///minimum point (roughly)= `[420.968746,420.968746,...420.968746]`. Value of minimum point = approx. -418.982887272433799807913601398*Number of Dimensions
 pub fn schwefel226(v: &Vec<f64>) -> f64 {
@@ -585,6 +637,16 @@ pub fn sum_squares(v: &Vec<f64>) -> f64 {
     result
 }
 
+///2 dimensions, Range= `[-5,5]`
+///
+///Minimum of f(x)=0 at x=(0,0)
+///
+///Source: <https://www.sfu.ca/~ssurjano/sumsqu.html>
+pub fn three_hump_camel(v: &Vec<f64>) -> f64 {
+    let (x1, x2) = (v[0], v[1]);
+    (2.0 * x1.powi(2)) - (1.05 * x1.powi(4)) + (x1.powi(6) / 6.0) + (x1 * x2) + x2.powi(2)
+}
+
 ///n-dimensions, Unimodal
 ///
 ///Range=`[-5,10]`
@@ -600,3 +662,7 @@ pub fn zakharov(v: &Vec<f64>) -> f64 {
 
     sum1 + sum2.powi(2) + sum2.powi(4)
 }
+
+// pub fn recommend_me_a_function() -> {
+
+// }

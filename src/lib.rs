@@ -2,22 +2,25 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(non_snake_case)]
+
 mod benchmark_algos;
+use rand::thread_rng;
+use rand::Rng;
 
 //use std::num;
 
 //Results and tracking data
-struct WorldData<T> {
-    iteration_no: u32,      //how many iterations have been run
-    min_max: T, //the minimum/maximum reward value that we have found within the problem space (must be a single value)
-    min_max_point: Vec<T>, //the vector solution that will return this point
+struct Optimizer {
+    iteration_no: u32,       //how many iterations have been run
+    min_max: f64, //the minimum/maximum reward value that we have found within the problem space (must be a single value)
+    min_max_point: Vec<f64>, //the vector solution that will return this point
     seconds_taken: f64, //time taken
     algorithm_used: String, //name of the algorithm used
 }
 
-impl<T> WorldData<T> {
-    fn new(algorithm_used: String) -> WorldData<f64> {
-        WorldData {
+impl Optimizer {
+    fn new(algorithm_used: String) -> Optimizer {
+        Optimizer {
             iteration_no: 0,
             min_max: 0.0,
             min_max_point: vec![0.0],
@@ -26,34 +29,54 @@ impl<T> WorldData<T> {
         }
     }
 
-    fn next_iteration() {}
+    //input of all such methods:
+    //An n-dimensional vector containing our guess
+    //output:
+    //A single f64 for greatest precision
+
+    //Karaboga's classic ABC from https://www.researchgate.net/publication/221498082_Artificial_Bee_Colony_ABC_Optimization_Algorithm_for_Solving_Constrained_Optimization_Problems
+
+    //Number of dimensions is unknown, so easier to pass in as vec, but a lower & upper bound is necessary/easily set & known, so pass in as array.
+    fn classic_abc(self: &Self, search_space: &Vec<[f64; 2]>) {
+        //println!("search_space={}",search_space[0][1]);
+
+        let mut random_generator = rand::thread_rng();
+
+        for i in search_space {
+            let results: f64 = random_generator.gen_range(search_space[0][0]..=search_space[0][1]);
+        }
+    } //Note: To reaserch whether the input vector or input array size need to be known at compile time.
+
+    //Reinforcement learning ABC from https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0200738
+    fn r_abc() {}
+
+    //VS_RABC  from my Final Year Thesis project
+    fn vs_rabc() {}
 }
-
-//input of all such methods:
-//An n-dimensional vector containing our guess
-//output:
-//A single f64 for greatest precision
-
-//Karaboga's classic ABC from https://www.researchgate.net/publication/221498082_Artificial_Bee_Colony_ABC_Optimization_Algorithm_for_Solving_Constrained_Optimization_Problems
-fn classic_abc() {}
-
-//Reinforcement learning ABC from https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0200738
-fn r_abc() {}
-
-//VS_RABC  from my Final Year Thesis project
-fn vs_rabc() {}
 
 //verify values of each dimension to make sure they are within bounds
 fn value_verification<T>(upper: T, lower: T) {
     panic!("Value outside expected range.");
 }
 
+#[cfg(test)]
+mod search_algos_tests {
+
+    #[test]
+    fn test_classic_abc() {
+        const DIMENSIONS: usize = 3;
+        let search_space = vec![[-10.0, 10.0], [-10.0, 10.0], [-10.0, 10.0]];
+        super::Optimizer::new(String::from("test")).classic_abc(&search_space);
+        //super::classic_abc(search_space,);
+        //Search space should be represented by a 2-D array holding [lower bounds; upper bounds] for each dimension
+    }
+}
 
 #[cfg(test)]
 mod benchmark_tests {
-    use std::f64::consts::PI;
-    use benchmark_algos::*;
     use super::*;
+    use benchmark_algos::*;
+    use std::f64::consts::PI;
     // //Note: boundary values are -5.12 and 5.12 //Rastrigin test function.
     // fn rastrigin(input_vector:&Vec<f64>) -> f64
     // {
@@ -70,7 +93,7 @@ mod benchmark_tests {
     //One global minimum of f(x)=0 at x=(0,...0)
     //Generalized to N-dimensions
     #[test]
-    fn test_Ackley() {
+    fn test_ackley() {
         let my_vector = vec![0.0, 0.0];
         let my_vector2 = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         let my_vector3 = vec![7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0, 0.0];
@@ -83,7 +106,7 @@ mod benchmark_tests {
     }
 
     #[test]
-    fn test_Alpine_1() {
+    fn test_alpine_1() {
         let my_vector = vec![0.0, 0.0];
         let my_vector2 = vec![2.0];
         let my_vector3 = vec![1.0, 7.0, 7.0, 6.0];
@@ -94,7 +117,7 @@ mod benchmark_tests {
     }
 
     #[test]
-    fn test_Alpine_2() {
+    fn test_alpine_2() {
         let my_vector = vec![0.0, 0.0];
         let my_vector2 = vec![2.0];
         let my_vector3 = vec![1.0, 7.0, 7.0, 6.0];
@@ -105,7 +128,7 @@ mod benchmark_tests {
     }
 
     #[test]
-    fn test_Alpine_2_max() {
+    fn test_alpine_2_max() {
         let my_vector = vec![0.0, 0.0];
         let my_vector2 = vec![2.0];
         let my_vector3 = vec![1.0, 7.0, 7.0, 6.0];
@@ -134,6 +157,30 @@ mod benchmark_tests {
         assert_eq!(bukin_6(&my_vector), 0.0);
     }
 
+    #[test]
+    fn test_cross_in_tray() {
+        let my_vector = vec![-1.34941, -1.34941];
+        let my_vector2 = vec![-1.34941, 1.34941];
+        let my_vector3 = vec![1.34941, -1.34941];
+        let my_vector4 = vec![1.34941, 1.34941];
+
+        assert_eq!(
+            (cross_in_tray(&my_vector) * 1.0e5).round() / 1.0e5,
+            -2.06261
+        );
+        assert_eq!(
+            (cross_in_tray(&my_vector2) * 1.0e5).round() / 1.0e5,
+            -2.06261
+        );
+        assert_eq!(
+            (cross_in_tray(&my_vector3) * 1.0e5).round() / 1.0e5,
+            -2.06261
+        );
+        assert_eq!(
+            (cross_in_tray(&my_vector4) * 1.0e5).round() / 1.0e5,
+            -2.06261
+        );
+    }
     #[test]
     fn test_cross_leg_table() {
         let myvector = vec![0.0, 9.9];
@@ -196,6 +243,12 @@ mod benchmark_tests {
     }
 
     #[test]
+    fn test_goldstein_price() {
+        let myvector = vec![0.0, -1.0];
+        assert_eq!(goldstein_price(&myvector), 3.0);
+    }
+
+    #[test]
     fn test_griewank() {
         let myvector = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         let myvector2 = vec![1.0, 7.0, 7.0, -6.0];
@@ -234,12 +287,27 @@ mod benchmark_tests {
     }
 
     #[test]
+    fn test_matyas() {
+        let my_vector = vec![0.0, 0.0];
+        assert_eq!(matyas(&my_vector), 0.0);
+    }
+
+    #[test]
+    fn test_mccormick() {
+        let my_vector = vec![-0.54719, -1.54719];
+        assert_eq!((mccormick(&my_vector) * 1.0e4).round() / 1.0e4, -1.9132);
+    }
+
+    #[test]
     fn test_michalewicz() {
         let my_vector = vec![
             2.202906, 1.570796, 1.284992, 1.923058, 1.720470, 1.570796, 1.454414, 1.756087,
             1.655717, 1.570796,
         ];
-        assert_eq!((michalewicz(&my_vector) * 1.0e7).round() / 1.0e7, -9.6601517);
+        assert_eq!(
+            (michalewicz(&my_vector) * 1.0e7).round() / 1.0e7,
+            -9.6601517
+        );
     }
 
     #[test]
@@ -302,7 +370,17 @@ mod benchmark_tests {
     }
 
     #[test]
-    fn test_schweffel12() {
+    fn test_schwefel() {
+        let my_vector = vec![420.9687, 420.9687];
+        let my_vector2 = vec![420.9687, 420.9687, 420.9687];
+        let my_vector3 = vec![420.9687, 420.9687, 420.9687, 420.9687, 420.9687];
+        assert_eq!((schwefel(&my_vector) * 1.0e3).round() / 1.0e3, 0.0);
+        assert_eq!((schwefel(&my_vector2) * 1.0e3).round() / 1.0e3, 0.0);
+        assert_eq!((schwefel(&my_vector3) * 1.0e3).round() / 1.0e3, 0.0);
+    }
+
+    #[test]
+    fn test_schwefel12() {
         let my_vector = vec![0.0, 0.0, 0.0, 0.0];
         let my_vector2 = vec![1.0, 7.0, 7.0, 6.0];
 
@@ -311,7 +389,7 @@ mod benchmark_tests {
     }
 
     #[test]
-    fn test_schweffel226() {
+    fn test_schwefel226() {
         let my_vector = vec![420.968746, 420.968746, 420.968746, 420.968746, 420.968746];
         let my_vector2 = vec![420.9687; 30];
 
@@ -392,6 +470,12 @@ mod benchmark_tests {
     fn test_sum_squares() {
         let my_vector = vec![0.0, 0.0, 0.0, 0.0, 0.0];
         assert_eq!(sum_squares(&my_vector), 0.0); //value obtained from another python code I trust
+    }
+
+    #[test]
+    fn test_three_hump_camel() {
+        let my_vector = vec![0.0, 0.0];
+        assert_eq!(three_hump_camel(&my_vector), 0.0);
     }
 
     #[test]
