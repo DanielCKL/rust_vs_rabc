@@ -4,30 +4,44 @@
 #![allow(non_snake_case)]
 
 mod benchmark_algos;
-use rand::thread_rng;
 use rand::Rng;
+//use std::time::
 
-//use std::num;
+#[derive(Default, Debug)]
+pub struct Optimizer {
+    //COMPULSORY Optimizer parameters
+    pub max_iterations: u64,                 //CANNOT be running FOREVER
+    pub problem_space_bounds: Vec<[f64; 2]>, //Cannot possibly be unbounded!
 
-//Results and tracking data
-struct Optimizer {
-    iteration_no: u32,       //how many iterations have been run
-    min_max: f64, //the minimum/maximum reward value that we have found within the problem space (must be a single value)
-    min_max_point: Vec<f64>, //the vector solution that will return this point
-    seconds_taken: f64, //time taken
-    algorithm_used: String, //name of the algorithm used
+    //optional parameters
+    pub employed_bees: i64,
+    pub onlooker_bees: i64,
+    pub scout_bees: i64, //If None (default), will be set by algorithm itself
+    pub maximize: bool,  //if true, maximize, if false, minimize
+    pub local_limit:i64,
+
+    //Problem Space metadata
+    //Calculated from length of problem_space_bounds.
+    pub number_of_dimensions: usize,
+    //Optional Problem Space Metadata
+    pub known_minimum_value: Option<f64>, //The minimum value of the function, if known (already-solved real-world problem/known test function). Defaults to Option::None.
+    pub known_minimum_point: Option<Vec<f64>>, //The minimum point coordinates of the function, if known (already-solved real-world problem/known test function). Defaults to Option::None.
+    pub fitness_function_name: String,         //can be name of test function/real-world problem
+    pub fitness_function_description: String,
+
+    //Optimization Algorithm metadata
+    pub algorithm_name: String, //Name of the algorithm being used
+    pub algorithm_description: String,
+
+    //Performance data to be written AFTER the algorithm has finished running.
+    pub searches_made: u64, //how many iterations have been run. Default of 0
+    pub min_max_value: f64, //the minimum/maximum reward value found within problem space (single value). Default of 0.0
+    pub min_max_point: Vec<f64>, //vector solution that will return min_max_value.
+    pub seconds_taken: f64, //#TODO: Real time taken. Default of 0.0
 }
 
 impl Optimizer {
-    fn new(algorithm_used: String) -> Optimizer {
-        Optimizer {
-            iteration_no: 0,
-            min_max: 0.0,
-            min_max_point: vec![0.0],
-            seconds_taken: 0.0,
-            algorithm_used,
-        }
-    }
+    //2 different sets of params: 1. Compulsory , 2. optional. All optional to be inside an enum
 
     //input of all such methods:
     //An n-dimensional vector containing our guess
@@ -37,43 +51,198 @@ impl Optimizer {
     //Karaboga's classic ABC from https://www.researchgate.net/publication/221498082_Artificial_Bee_Colony_ABC_Optimization_Algorithm_for_Solving_Constrained_Optimization_Problems
 
     //Number of dimensions is unknown, so easier to pass in as vec, but a lower & upper bound is necessary/easily set & known, so pass in as array.
-    fn classic_abc(self: &Self, search_space: &Vec<[f64; 2]>) {
-        //println!("search_space={}",search_space[0][1]);
 
-        let mut random_generator = rand::thread_rng();
+    //source: https://www.researchgate.net/publication/225392029_A_powerful_and_efficient_algorithm_for_numerical_function_optimization_Artificial_bee_colony_ABC_algorithm
 
-        for i in search_space {
-            let results: f64 = random_generator.gen_range(search_space[0][0]..=search_space[0][1]);
+    //default constructor ->MUST be used to create an instance of Optimizer
+    pub fn new() -> Self {
+        Self {
+            employed_bees: 62i64, //Default values for employed, onlooker, and scout bees as recommended in the source paper.
+            onlooker_bees: 62i64,
+            scout_bees: 1i64,
+            maximize: true, //default to finding maximum value in input problem space
+            ..Default::default()
         }
-    } //Note: To reaserch whether the input vector or input array size need to be known at compile time.
+    }
+
+    pub fn minimize(mut self: Self) -> Self {
+        self.maximize = false;
+        self
+    }
+
+    pub fn classic_abc(
+        self: &mut Self,
+        problem_space_bounds: &Vec<[f64; 2]>,
+        max_iterations: u64,
+        fitness_function: fn(&Vec<f64>) -> f64,
+    ) {
+        //create an optimizer object first with all the default fields and metadata initialized.
+        // let mut instance =
+        //     Optimizer::default_initializer(problem_space_bounds, max_iterations);//, other_args);
+
+        //Set metadata for this function.
+        self.problem_space_bounds = problem_space_bounds.to_vec();
+        self.number_of_dimensions = self.problem_space_bounds.len() as usize;
+        self.max_iterations = max_iterations;
+        self.algorithm_name = String::from("classic_abc");
+        self.algorithm_description=String::from("Karaboga's classic ABC from https://www.researchgate.net/publication/221498082_Artificial_Bee_Colony_ABC_Optimization_Algorithm_for_Solving_Constrained_Optimization_Problems");
+
+
+        //default of this algorithim is maximization, set to 'false' to minimize instead.
+        let minmax_factor = if self.maximize { 1.0f64 } else { -1.0f64 };
+
+
+        //Add actions to ALWAYS be performed with each search to avoid further indirection from closures/function nesting.
+        macro_rules! perform_search {
+            ($x:expr) => {{
+                self.searches_made += 1; //perform all other actions here
+                minmax_factor * fitness_function($x) //MUST return this at the very end
+            }};
+        }
+
+        //Set up RNG
+        let mut random_generator = rand::thread_rng(); 
+
+        //Generate value for RabC that is not 0
+        //let random_float:f64=random_generator.gen_range(f64::MIN_POSITIVE..1.0);
+
+        //Begin algorithm here:
+
+        //Initialize e employed bee positions in n dimensions: [[0.0f64 ... n], ... e]
+        let mut employed_bees_points =
+            vec![vec![0.0f64; self.number_of_dimensions]; self.employed_bees as usize];
+
+        //create a vector to keep track of number of attempts made per food source
+        let mut attempts_per_food_source = vec![0.0f64;self.employed_bees as usize];
+
+        for each_search_point in &mut employed_bees_points {
+            for i in 0..self.number_of_dimensions {                       //for every single dimension
+                each_search_point[i] = random_generator
+                    .gen_range::<f64, _>(problem_space_bounds[i][0]..problem_space_bounds[i][1])  //generate random values within problem space bounds.
+            }
+        }
+        //Perform initial search with employed bees on every single point
+        let employed_bees_searches: Vec<f64> = employed_bees_points
+            .iter()
+            .map(|x| -> f64 { perform_search!(x) })
+            .collect();
+
+        //Loop through the algorithm here
+        for i in 0..self.max_iterations {
+        //next: vij = xij + φij(xij − xkj), Modify initial search: 
+        //employed_bees_searches=
+
+
+
+        }
+        println!("{:?}", employed_bees_points);
+        println!("{}",self.maximize);
+
+        //Finish off here with the rest of the metadata
+        self.min_max_value = 1f64;
+        self.min_max_point = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
+    }
 
     //Reinforcement learning ABC from https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0200738
-    fn r_abc() {}
+    pub fn r_abc() {}
 
-    //VS_RABC  from my Final Year Thesis project
-    fn vs_rabc() {}
+    //VS_RABC from my Final Year Thesis project
+    pub fn vs_rabc() {}
+
+    pub fn get_results() {}
 }
 
 //verify values of each dimension to make sure they are within bounds
-fn value_verification<T>(upper: T, lower: T) {
+pub fn value_verification<T>(upper: T, lower: T) {
     panic!("Value outside expected range.");
 }
 
-#[cfg(test)]
-mod search_algos_tests {
-
-    #[test]
-    fn test_classic_abc() {
-        const DIMENSIONS: usize = 3;
-        let search_space = vec![[-10.0, 10.0], [-10.0, 10.0], [-10.0, 10.0]];
-        super::Optimizer::new(String::from("test")).classic_abc(&search_space);
-        //super::classic_abc(search_space,);
-        //Search space should be represented by a 2-D array holding [lower bounds; upper bounds] for each dimension
-    }
+pub fn print_type_of<T>(_: &T) {
+    println!("{}", std::any::type_name::<T>());
 }
 
 #[cfg(test)]
-mod benchmark_tests {
+mod search_algos {
+    use super::*;
+    #[test]
+    fn test_classic_abc() {
+        //#region
+        //Set up problem space bounds
+        let problem_space_bounds = vec![
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+        ];
+
+        //create new instance of struct
+        let mut optimize_rana = Optimizer::new().minimize();
+
+        //set custom metadata. Should be fine even if it's commented out.
+        optimize_rana.fitness_function_name = String::from("rana");
+        optimize_rana.fitness_function_description=String::from("N-dimensional, multimodal. Range = [-512,512] for all dimensions. minimum point for 2D: `[-488.632577, 512]`  Minimum value for 2D=-511.7328819,  Minimum point for 7D: `[-512, -512, -512, -512, -512, -512, -511.995602]` minimum value for 7D=-3070.2475210");
+        optimize_rana.known_minimum_value = Some(-3070.2475210);
+        optimize_rana.known_minimum_point = Some(vec![
+            -512.0,
+            -512.0,
+            -512.0,
+            -512.0,
+            -512.0,
+            -512.0,
+            -511.995602,
+        ]);
+        //#endregion
+        //Run optimization function here.
+        optimize_rana.classic_abc(
+            &problem_space_bounds,
+            20u64,                //Max iterations
+            benchmark_algos::rana, //name of fitness function
+        );
+        //println!("\n\nObject={:#?}\n\n", optimize_rana);
+    }
+
+    #[test]
+    fn test_classic_abc_no_optional_metadata() {
+        //Set up problem space bounds
+        let problem_space_bounds = vec![
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+        ];
+
+        //create new instance of struct
+        let mut optimize_rana = Optimizer::new();
+
+        //Run optimization function here.
+        optimize_rana.classic_abc(
+            &problem_space_bounds,
+            100u64,                //Max iterations
+            benchmark_algos::rana, //name of fitness function
+        );
+        println!("\n\nObject={:#?}\n\n", optimize_rana);
+    }
+
+    #[test]
+    fn test_classic_abc_minimize_flag() {
+
+        //create new instance of struct
+        let mut optimize_rana = Optimizer::new().minimize();
+
+        assert_eq!(optimize_rana.maximize,false);  //make sure minimization flag was really applied!
+
+    }
+
+}
+
+#[cfg(test)]
+mod test_functions {
     use super::*;
     use benchmark_algos::*;
     use std::f64::consts::PI;
