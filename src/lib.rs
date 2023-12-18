@@ -1,24 +1,27 @@
+// TODO: Fine-tune the limit/bounds setting system.
+
 //submodule for benchmark algorithms
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(non_snake_case)]
 
 mod benchmark_algos;
-use rand::Rng;
-//use std::time::
+use rand::{Rng,distributions::WeightedIndex,distributions::Distribution};
+use std::time::{Instant,Duration};
 
 #[derive(Default, Debug)]
 pub struct Optimizer {
     //COMPULSORY Optimizer parameters
     pub max_iterations: u64,                 //CANNOT be running FOREVER
-    pub problem_space_bounds: Vec<[f64; 2]>, //Cannot possibly be unbounded!
+    pub problem_space_bounds: Vec<[f64; 2]>, //Cannot possibly be unbounded! Assumed stored as inclusive always [ub,lb]
 
     //optional parameters
-    pub employed_bees: i64,
-    pub onlooker_bees: i64,
-    pub scout_bees: i64, //If None (default), will be set by algorithm itself
-    pub maximize: bool,  //if true, maximize, if false, minimize
-    pub local_limit:i64,
+    pub employed_bees: usize,
+    pub onlooker_bees: usize,
+    pub scout_bees: usize, //If None (default), will be set by algorithm itself
+    pub maximize: bool,    //if true, maximize, if false, minimize
+    pub local_limit: i64,
+    pub problem_space_bounds_inclusivity: String,
 
     //Problem Space metadata
     //Calculated from length of problem_space_bounds.
@@ -37,7 +40,7 @@ pub struct Optimizer {
     pub searches_made: u64, //how many iterations have been run. Default of 0
     pub min_max_value: f64, //the minimum/maximum reward value found within problem space (single value). Default of 0.0
     pub min_max_point: Vec<f64>, //vector solution that will return min_max_value.
-    pub seconds_taken: f64, //#TODO: Real time taken. Default of 0.0
+    pub real_time_taken: Duration, //Real time taken. Default of 0.0
 }
 
 impl Optimizer {
@@ -52,22 +55,120 @@ impl Optimizer {
 
     //Number of dimensions is unknown, so easier to pass in as vec, but a lower & upper bound is necessary/easily set & known, so pass in as array.
 
-    //source: https://www.researchgate.net/publication/225392029_A_powerful_and_efficient_algorithm_for_numerical_function_optimization_Artificial_bee_colony_ABC_algorithm
-
+    //sources: https://www.researchgate.net/publication/225392029_A_powerful_and_efficient_algorithm_for_numerical_function_optimization_Artificial_bee_colony_ABC_algorithm ,
+    //https://www.mdpi.com/2227-7390/7/3/289
     //default constructor ->MUST be used to create an instance of Optimizer
     pub fn new() -> Self {
         Self {
-            employed_bees: 62i64, //Default values for employed, onlooker, and scout bees as recommended in the source paper.
-            onlooker_bees: 62i64,
-            scout_bees: 1i64,
+            employed_bees: 62usize, //Default values for employed, onlooker, and scout bees as recommended in the source paper.
+            onlooker_bees: 62usize,
+            scout_bees: 1usize,
             maximize: true, //default to finding maximum value in input problem space
+            problem_space_bounds_inclusivity: "[]".to_string(), //default to inclusive upper and lower
             ..Default::default()
         }
     }
 
+    //Builder-pattern method to switch from maximization to minimization mode.
     pub fn minimize(mut self: Self) -> Self {
         self.maximize = false;
         self
+    }
+
+    //Taken from https://doc.rust-lang.org/src/core/num/f64.rs.html#740
+    pub fn next_up(val: f64) -> f64 {
+        // We must use strictly integer arithmetic to prevent denormals from
+        // flushing to zero after an arithmetic operation on some platforms.
+        const TINY_BITS: u64 = 0x1; // Smallest positive f64.
+        const CLEAR_SIGN_MASK: u64 = 0x7fff_ffff_ffff_ffff;
+
+        let bits = val.to_bits();
+        if val.is_nan() || bits == f64::INFINITY.to_bits() {
+            return val; //return as it is if infinity or nan
+        }
+
+        let abs = bits & CLEAR_SIGN_MASK; //Get absolute value (clear the sign bit)
+        let next_bits = if abs == 0 {
+            TINY_BITS
+        } else if bits == abs {
+            bits + 1
+        } else {
+            bits - 1 //if negative, the next number will be LESS negative (-1 comes above -2)
+        };
+        f64::from_bits(next_bits)
+    }
+
+    // vec1 + vec2
+    fn add_elementwise(vec1: &Vec<f64>, vec2: &Vec<f64>) -> Vec<f64> {
+        let result: Vec<f64> = vec1.iter().zip(vec2.iter()).map(|(a, b)| a + b).collect();
+        println!("{:?}", result);
+        result
+    }
+
+    // vec1 - vec2
+    fn deduct_elementwise(vec1: &Vec<f64>, vec2: &Vec<f64>) -> Vec<f64> {
+        let result: Vec<f64> = vec1.iter().zip(vec2.iter()).map(|(a, b)| a - b).collect();
+        println!("{:?}", result);
+        result
+    }
+
+    // vec1 * vec2
+    fn multiply_elementwise(vec1: &Vec<f64>, vec2: &Vec<f64>) -> Vec<f64> {
+        let result: Vec<f64> = vec1.iter().zip(vec2.iter()).map(|(a, b)| a * b).collect();
+        println!("{:?}", result);
+        result
+    }
+
+    //set bounds for input to allow them to comply with the default .. data inside.
+    pub fn set_bounds(input: &Vec<[f64; 2]>, mode: &str) -> Vec<[f64; 2]> {
+        if mode == "(]" {
+            //(lb,ub]  =>Lower bound exclusive, upper bound inclusive =>Setting = "(]"
+            input
+                .to_vec()
+                .iter()
+                .map(|x| [Self::next_up(x[0]), Self::next_up(x[1])])
+                .collect()
+        } else if mode == "()" {
+            //(lb,ub) => Lower bound exclusive, upper bound exclusive =>Setting = "()"
+            input
+                .to_vec()
+                .iter()
+                .map(|x| [Self::next_up(x[0]), x[1]])
+                .collect()
+        } else if mode == "[)" {
+            //[lb,ub) =>Lower bound inclusive, upper bound exclusive =>Setting = "[)"
+            input.to_vec()
+        } else {
+            //[lb, ub] => Default: Lower bound inclusive, upper bound inclusive =>Setting = "[]"
+            input
+                .to_vec()
+                .iter()
+                .map(|x| [(x[0]), Self::next_up(x[1])])
+                .collect()
+        }
+    }
+
+    //Taken from https://doc.rust-lang.org/src/core/num/f64.rs.html#740
+    fn next_down(val: f64) -> f64 {
+        // We must use strictly integer arithmetic to prevent denormals from
+        // flushing to zero after an arithmetic operation on some platforms.
+        const NEG_TINY_BITS: u64 = 0x8000_0000_0000_0001; // Smallest (in magnitude) negative f64.
+        const CLEAR_SIGN_MASK: u64 = 0x7fff_ffff_ffff_ffff;
+
+        let bits = val.to_bits();
+        if val.is_nan() || bits == f64::NEG_INFINITY.to_bits() {
+            return val; //return as it is if infinity or nan
+        }
+
+        let abs = bits & CLEAR_SIGN_MASK; //Get absolute value (clear the sign bit)
+        let next_bits = if abs == 0 {
+            NEG_TINY_BITS
+        } else if bits == abs {
+            bits - 1
+        } else {
+            bits + 1 //if negative, the next number will be MORE negative. (-2 comes below -1)
+        };
+        f64::from_bits(next_bits)
     }
 
     pub fn classic_abc(
@@ -79,18 +180,27 @@ impl Optimizer {
         //create an optimizer object first with all the default fields and metadata initialized.
         // let mut instance =
         //     Optimizer::default_initializer(problem_space_bounds, max_iterations);//, other_args);
-
+        //Start timer here
+        let function_real_time=Instant::now();
         //Set metadata for this function.
         self.problem_space_bounds = problem_space_bounds.to_vec();
+        let adjusted_bounds = Optimizer::set_bounds(
+            &self.problem_space_bounds,
+            &self.problem_space_bounds_inclusivity,
+        );
+
         self.number_of_dimensions = self.problem_space_bounds.len() as usize;
         self.max_iterations = max_iterations;
         self.algorithm_name = String::from("classic_abc");
         self.algorithm_description=String::from("Karaboga's classic ABC from https://www.researchgate.net/publication/221498082_Artificial_Bee_Colony_ABC_Optimization_Algorithm_for_Solving_Constrained_Optimization_Problems");
 
+        //Ensure that the metadata set does not have an unacceptable value.
+        if self.employed_bees < 2 {
+            panic!("Number of employed bees should be greater than or equal to 2");
+        }
 
         //default of this algorithim is maximization, set to 'false' to minimize instead.
         let minmax_factor = if self.maximize { 1.0f64 } else { -1.0f64 };
-
 
         //Add actions to ALWAYS be performed with each search to avoid further indirection from closures/function nesting.
         macro_rules! perform_search {
@@ -101,46 +211,138 @@ impl Optimizer {
         }
 
         //Set up RNG
-        let mut random_generator = rand::thread_rng(); 
+        let mut random_generator = rand::thread_rng();
 
         //Generate value for RabC that is not 0
         //let random_float:f64=random_generator.gen_range(f64::MIN_POSITIVE..1.0);
 
         //Begin algorithm here:
 
-        //Initialize e employed bee positions in n dimensions: [[0.0f64 ... n], ... e]
+        //INITIALIZE e employed bee positions in n dimensions: vec![vec![0.0f64 ... n], ... e]
         let mut employed_bees_points =
-            vec![vec![0.0f64; self.number_of_dimensions]; self.employed_bees as usize];
+            vec![vec![0.0f64; self.number_of_dimensions]; self.employed_bees];
 
         //create a vector to keep track of number of attempts made per food source
-        let mut attempts_per_food_source = vec![0.0f64;self.employed_bees as usize];
+        let mut attempts_per_food_source = vec![0i64; self.employed_bees];
 
+        //Generate intial solutions
         for each_search_point in &mut employed_bees_points {
-            for i in 0..self.number_of_dimensions {                       //for every single dimension
+            for i in 0..self.number_of_dimensions {
+                //for every single dimension
                 each_search_point[i] = random_generator
-                    .gen_range::<f64, _>(problem_space_bounds[i][0]..problem_space_bounds[i][1])  //generate random values within problem space bounds.
+                    .gen_range::<f64, _>(adjusted_bounds[i][0]..adjusted_bounds[i][1])
+                //generate random values within problem space bounds.
             }
         }
         //Perform initial search with employed bees on every single point
-        let employed_bees_searches: Vec<f64> = employed_bees_points
+        let mut food_source_values: Vec<f64> = employed_bees_points
             .iter()
             .map(|x| -> f64 { perform_search!(x) })
             .collect();
+        let mut normalized_food_source_values=vec![0.0f64;self.employed_bees];
+
+        let mut trial_search_points = employed_bees_points.clone(); //Create an intermediate copy of the searches already made.
+        
+
+        /*A function to search for new food sources. 
+        Defined here because it may differ with ABC variant.
+        Takes a mutable reference that allows it to modify the inputs.*/
+        // #[inline(always)]
+        // fn new_points_search (number_of_dimensions) 
+        // {
+        // let dimension: usize = random_generator.gen_range(0..self.number_of_dimensions);
+        
+        // }
+
+
+        //TODO: CONTINUE HERE 1
 
         //Loop through the algorithm here
-        for i in 0..self.max_iterations {
-        //next: vij = xij + φij(xij − xkj), Modify initial search: 
-        //employed_bees_searches=
+        for iteration in 0..self.max_iterations {
+            //next: vij = xij + φij(xij − xkj), Modify initial positions and search again:
+            //employed_bees_points=
+            //        attempts_per_food_source.iter().map(|x|{x+1});  //add 1 to the number of times we explore a food source
+            //xkj is an existing solution
+
+            //println!("\nBefore:\n{:?}", employed_bees_points);
+
+            for i in 0..self.employed_bees {
+                //Karaboga: at each cycle at most one scout ... number of employed and onlooker bees were equal.
+                //Number of employed and onlooker bees will remain the same throughout the algorithm.
+
+                //For every single employed bee
+                //Select a random dimension
+                let dimension: usize = random_generator.gen_range(0..self.number_of_dimensions);
+
+                //Select the index for an existing random food source
+                let mut random_solution_index: usize =
+                    random_generator.gen_range(0..self.employed_bees);
+                while random_solution_index == i {
+                    random_solution_index = random_generator.gen_range(0..self.employed_bees)
+                }
+
+                // Modify initial positions by xij + phi_ij(xij − xkj)
+                let existing_sol = employed_bees_points[i][dimension];
+
+                //Modify
+                let tentative_new = existing_sol
+                    + (random_generator.gen_range::<f64, _>(-1.0..1.0000000000000002)
+                        * (existing_sol - employed_bees_points[random_solution_index][dimension]));
+
+                //Check if out of bounds, if they are out of bounds set them to those bounds
+                let (lower_bound, upper_bound) = (
+                    self.problem_space_bounds[dimension][0],
+                    self.problem_space_bounds[dimension][1],
+                );
+                if tentative_new < lower_bound {
+                    trial_search_points[i][dimension] = lower_bound
+                } else if tentative_new > upper_bound {
+                    trial_search_points[i][dimension] = upper_bound
+                }
+
+                //compare new solutions to old ones
+                let new_search = perform_search!(&trial_search_points[i]);
+                if new_search > food_source_values[i] {
+                //Update to new points if the new source has as higher fitness value
+                    employed_bees_points[i][dimension] = trial_search_points[i][dimension];
+                //Update to new fitness value too
+                food_source_values[i]=new_search;
+                
+                } else {  //do nothing
+                };
+
+                //calculate probability for onlooker bees
+
+                //Normalize values (if there are negative values, add the (modulus of the smallest negative value) +1)
+                let abs_minimum_value= food_source_values.iter().min_by(|a,b|a.partial_cmp(b).unwrap()).unwrap().abs();  //TODO: Optimize code finding smallest negative value
+
+                normalized_food_source_values=food_source_values.iter().map(|x|{*x+abs_minimum_value+1f64}).collect();
+
+                
+                
+                
+                //Set onlooker bees based on probability
+                //TODO: CONTINUE HERE 2
+
+                for i in 0..self.onlooker_bees{
+                &employed_bees_points[WeightedIndex::new(&normalized_food_source_values).unwrap().sample(&mut random_generator)];                
+                }
+
+                //randomly reach out with the scout bee 
 
 
-
+                //Drop if maximum iterations reached and look for a new food source.
+            }
         }
-        println!("{:?}", employed_bees_points);
-        println!("{}",self.maximize);
+        println!("{:?}", trial_search_points);   
+        println!("\n{:?}", food_source_values);   
+        println!("\nNormalized searches={:?}", normalized_food_source_values);  
+        //println!("after: \n\n {:?}",trial_search_points);
 
         //Finish off here with the rest of the metadata
         self.min_max_value = 1f64;
         self.min_max_point = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
+        self.real_time_taken=function_real_time.elapsed();
     }
 
     //Reinforcement learning ABC from https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0200738
@@ -163,12 +365,34 @@ pub fn print_type_of<T>(_: &T) {
 
 #[cfg(test)]
 mod search_algos {
+    #[test]
+    fn run_code() {
+        assert_eq!(
+            Optimizer::set_bounds(&vec![[-1.0, 1.0]], "[]"),
+            vec![[-1.0, 1.0000000000000002]]
+        );
+        assert_eq!(1.0, 1.0000000000000001); //Shows that there is no difference between 1.0 and 1.0000000000000001
+        assert_ne!(1.0, 1.0000000000000002); //shows that there is a difference here. 1.0000000000000002 is truly the smallest number.
+
+        let mut a:f64=3.0;
+        fn change_value(input:&mut f64)
+        {
+        *input = *input+1f64;
+        }
+
+        change_value(&mut a);
+
+        println!("The value of a is {}",a);
+
+    }
+
     use super::*;
     #[test]
     fn test_classic_abc() {
         //#region
         //Set up problem space bounds
-        let problem_space_bounds = vec![
+
+        let mut problem_space_bounds = vec![
             [-512.0, 512.0],
             [-512.0, 512.0],
             [-512.0, 512.0],
@@ -177,6 +401,9 @@ mod search_algos {
             [-512.0, 512.0],
             [-512.0, 512.0],
         ];
+
+        //Lower and upper bound inclusive
+        //problem_space_bounds = Optimizer::set_bounds(&problem_space_bounds, "[]");
 
         //create new instance of struct
         let mut optimize_rana = Optimizer::new().minimize();
@@ -194,18 +421,24 @@ mod search_algos {
             -512.0,
             -511.995602,
         ]);
+
         //#endregion
         //Run optimization function here.
         optimize_rana.classic_abc(
             &problem_space_bounds,
-            20u64,                //Max iterations
+            10u64,                 //Max iterations
             benchmark_algos::rana, //name of fitness function
         );
+        
+        println!("\nTime taken ={:?}\n",optimize_rana.real_time_taken);
+        //println!("Time taken in seconds ={}",optimize_rana.real_time_taken.as_secs());
+
+
         //println!("\n\nObject={:#?}\n\n", optimize_rana);
     }
 
     #[test]
-    fn test_classic_abc_no_optional_metadata() {
+    fn test_classic_abc_metadata() {
         //Set up problem space bounds
         let problem_space_bounds = vec![
             [-512.0, 512.0],
@@ -220,7 +453,7 @@ mod search_algos {
         //create new instance of struct
         let mut optimize_rana = Optimizer::new();
 
-        //Run optimization function here.
+        //Should work without optional metadata
         optimize_rana.classic_abc(
             &problem_space_bounds,
             100u64,                //Max iterations
@@ -231,14 +464,92 @@ mod search_algos {
 
     #[test]
     fn test_classic_abc_minimize_flag() {
-
         //create new instance of struct
-        let mut optimize_rana = Optimizer::new().minimize();
-
-        assert_eq!(optimize_rana.maximize,false);  //make sure minimization flag was really applied!
-
+        let optimize_rana = Optimizer::new().minimize();
+        assert_eq!(optimize_rana.maximize, false); //make sure minimization flag was really applied!
     }
 
+    #[test]
+    fn test_set_bounds() {
+        //#region
+        //Set up problem space bounds
+
+        let problem_space_bounds = vec![[-512.0, 512.0], [-512.0, 512.0], [-512.0, 512.0]];
+
+        /*
+        All ranges used for RNG genneration will be the default Rust '..'
+        which are lower-bound inclusive but upper-bound exclusive, aka [lb,ub).
+        For example, 'for i in 0..5 {println!("{}",i)}' Yields 0 1 2 3 4.
+        Thus, for your range:
+        If lower-bound inclusive & upper-bound exclusive, [lb,ub), no action needs to be taken. (Optimzier::set_bounds(input_vec,"[)_or_anything_else"))
+        If lower-bound inclusive & upper-bound inclusive, [lb, ub], add smallest unit to upper bound (use Optimzier::set_bounds(input_vec,"[]"))
+        If lower-bound exclusive & upper-bound inclusive, (lb, ub], add smallest unit to lower AND upper bounds (use Optimzier::set_bounds(input_vec,"(]"))
+        If lower-bound exclusive & upper-bound exclusive, (lb, ub), add smallest unit to lower bound (use Optimzier::set_bounds(input_vec,"()"))
+        */
+
+        assert_eq!(
+            Optimizer::set_bounds(&problem_space_bounds, "[)"),
+            problem_space_bounds
+        ); //Should have no change
+        assert_eq!(
+            Optimizer::set_bounds(&problem_space_bounds, ""),
+            vec![[-512.0, 512.0000000000001], [-512.0, 512.0000000000001], [-512.0, 512.0000000000001]]
+        ); //Default is "[]", lower and upper-bound inclusive
+        assert_eq!(
+            Optimizer::set_bounds(&problem_space_bounds, "RandomGibberish"),
+            vec![[-512.0, 512.0000000000001], [-512.0, 512.0000000000001], [-512.0, 512.0000000000001]]
+        ); //Default is "[]", lower and upper-bound inclusive
+        assert_eq!(
+            Optimizer::set_bounds(&problem_space_bounds, "[]"),
+            vec![
+                [-512.0, 512.0000000000001],
+                [-512.0, 512.0000000000001],
+                [-512.0, 512.0000000000001]
+            ]
+        ); //Add the smallest amount possible to upper bound
+        assert_eq!(
+            Optimizer::set_bounds(&problem_space_bounds, "(]"),
+            vec![
+                [-511.99999999999994, 512.0000000000001],
+                [-511.99999999999994, 512.0000000000001],
+                [-511.99999999999994, 512.0000000000001]
+            ]
+        ); //Add the smallest amount possible to upper bound and lower bound
+        assert_eq!(
+            Optimizer::set_bounds(&problem_space_bounds, "()"),
+            vec![
+                [-511.99999999999994, 512.0],
+                [-511.99999999999994, 512.0],
+                [-511.99999999999994, 512.0]
+            ]
+        ); //Add the smallest amount possible to lower bound only
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_classic_abc_invalid_options() {
+        //Set up problem space bounds
+        let problem_space_bounds = vec![
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+        ];
+
+        //create new instance of struct
+        let mut optimize_rana = Optimizer::new();
+
+        optimize_rana.employed_bees = 1;
+        //Should panic
+        optimize_rana.classic_abc(
+            &problem_space_bounds,
+            100u64,                //Max iterations
+            benchmark_algos::rana, //name of fitness function
+        )
+    }
 }
 
 #[cfg(test)]
