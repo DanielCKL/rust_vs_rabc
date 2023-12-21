@@ -663,6 +663,7 @@ pub fn zakharov(v: &Vec<f64>) -> f64 {
     sum1 + sum2.powi(2) + sum2.powi(4)
 }
 
-// pub fn recommend_me_a_function() -> {
-
-// }
+///Function for a unit test that ensures the program will panic when encountering f64::NAN in the fitness function.
+pub fn test_nan_function(v: &Vec<f64>) -> f64 {
+    f64::NAN
+}
