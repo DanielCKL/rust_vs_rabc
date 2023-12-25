@@ -68,7 +68,7 @@ impl Optimizer {
             employed_bees: 62usize, //Default values for employed, onlooker, and scout bees as recommended in the source paper.
             onlooker_bees: 62usize,
             permanent_scout_bees: 1usize,
-            local_limit: 220usize, //550usize seems to be the most optimal
+            local_limit: 20usize, //550usize seems to be the most optimal
             maximize: true,        //default to finding maximum value in input problem space
             min_max_value: f64::NEG_INFINITY,
             problem_space_bounds_inclusivity: "[]".to_string(), //default to inclusive upper and lower
@@ -470,7 +470,7 @@ impl Optimizer {
             if exceeded_max.len() > 0 {
                 //set food sources to scout food sources
                 let mut permanent_scout_bees_counter = self.permanent_scout_bees;
-
+                println!("The food sources that have been abandoned are: {:?}",exceeded_max);
                 for i in exceeded_max.iter() {
                     if permanent_scout_bees_counter > 0 {
                         //Get max food source index
@@ -485,10 +485,12 @@ impl Optimizer {
 
                         //reset scout bee memory for the scout bee that was taken
                         scout_food_sources_values[max_index] = f64::NEG_INFINITY;
+                        println!("Scout Bee {} deployed for abandoned food source {}",permanent_scout_bees_counter,*i);
                         permanent_scout_bees_counter -= 1;
+                        continue
                     }
                     //Once the scout bee(s) food source(s) have been taken, turn employed bees to scouts
-
+                    println!("Converting employed bee to new scout bee number {}", *i);
                     //Generate initial solutions -> randomly reach out with the employee turned scout bee
                     for (idx, each_dimension) in employed_bees_searches[*i].iter_mut().enumerate() {
                         //for every single dimension, generate random values within problem space bounds.
@@ -499,6 +501,9 @@ impl Optimizer {
                     //Perform search
                     food_source_values[*i] = perform_search!(&employed_bees_searches[*i]);
                 }
+                println!("\n\n");
+                //for j in exceeded_max.iter_par() {
+                //food_source_values[*j] = perform_search!(&employed_bees_searches[*j]);}
             }
             exceeded_max.clear(); //Reset the counters here
 
@@ -564,7 +569,7 @@ mod search_algos {
         optimize_rana.fitness_function_name = String::from("rana");
         optimize_rana.fitness_function_description=String::from("N-dimensional, multimodal. Range = [-512,512] for all dimensions. minimum point for 2D: `[-488.632577, 512]`  Minimum value for 2D=-511.7328819,  Minimum point for 7D: `[-512, -512, -512, -512, -512, -512, -511.995602]` minimum value for 7D=-3070.2475210");
         optimize_rana.known_minimum_value = Some(-3070.2475210);
-        optimize_rana.permanent_scout_bees = 2usize;
+        optimize_rana.permanent_scout_bees = 1usize;
         optimize_rana.known_minimum_point = Some(vec![
             -512.0,
             -512.0,
@@ -579,7 +584,7 @@ mod search_algos {
         //Run optimization function here.
         optimize_rana.classic_abc(
             &problem_space_bounds,
-            350u64,                //Max number of generations
+            450u64,                //Max number of generations
             benchmark_algos::rana, //name of fitness function
         );
 
