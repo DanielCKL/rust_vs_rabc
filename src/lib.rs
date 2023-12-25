@@ -470,10 +470,11 @@ impl Optimizer {
             if exceeded_max.len() > 0 {
                 //set food sources to scout food sources
                 let mut permanent_scout_bees_counter = self.permanent_scout_bees;
-                println!("The food sources that have been abandoned are: {:?}",exceeded_max);
+                //println!("The food sources that have been abandoned are: {:?}",exceeded_max);
                 for i in exceeded_max.iter() {
                     if permanent_scout_bees_counter > 0 {
-                        //Get max food source index
+                        //Get max food source index. Not the most efficient way, but has negligible
+                        //time costs as the number of scout bees is small.
                         let max_index = scout_food_sources_values
                             .iter()
                             .enumerate()
@@ -482,15 +483,15 @@ impl Optimizer {
                             .unwrap();
                         food_source_values[*i] = scout_food_sources_values[max_index];
                         employed_bees_searches[*i] = scout_bees_searches[max_index].clone();
+                        //println!("Scout Bee {} deployed for abandoned food source {}",permanent_scout_bees_counter,*i);
 
                         //reset scout bee memory for the scout bee that was taken
                         scout_food_sources_values[max_index] = f64::NEG_INFINITY;
-                        println!("Scout Bee {} deployed for abandoned food source {}",permanent_scout_bees_counter,*i);
                         permanent_scout_bees_counter -= 1;
                         continue
                     }
                     //Once the scout bee(s) food source(s) have been taken, turn employed bees to scouts
-                    println!("Converting employed bee to new scout bee number {}", *i);
+                    //println!("Converting employed bee to new scout bee number {}", *i);
                     //Generate initial solutions -> randomly reach out with the employee turned scout bee
                     for (idx, each_dimension) in employed_bees_searches[*i].iter_mut().enumerate() {
                         //for every single dimension, generate random values within problem space bounds.
@@ -569,7 +570,7 @@ mod search_algos {
         optimize_rana.fitness_function_name = String::from("rana");
         optimize_rana.fitness_function_description=String::from("N-dimensional, multimodal. Range = [-512,512] for all dimensions. minimum point for 2D: `[-488.632577, 512]`  Minimum value for 2D=-511.7328819,  Minimum point for 7D: `[-512, -512, -512, -512, -512, -512, -511.995602]` minimum value for 7D=-3070.2475210");
         optimize_rana.known_minimum_value = Some(-3070.2475210);
-        optimize_rana.permanent_scout_bees = 1usize;
+        optimize_rana.permanent_scout_bees = 2usize;
         optimize_rana.known_minimum_point = Some(vec![
             -512.0,
             -512.0,
