@@ -13,7 +13,6 @@ use rayon::prelude::*;
 use std::thread::available_parallelism;
 use std::time::{Duration, Instant};
 
-
 #[derive(Default, Debug)]
 pub struct Optimizer {
     //COMPULSORY Optimizer parameters
@@ -68,16 +67,39 @@ impl Optimizer {
     //default constructor ->MUST be used to create an instance of Optimizer
     pub fn new() -> Self {
         Self {
-            employed_bees: 12usize, //Default values for employed, onlooker, and scout bees as recommended in the source paper.
-            onlooker_bees: 12usize,
+            employed_bees: 62usize, //Default values for employed, onlooker, and scout bees as recommended in the source paper.
+            onlooker_bees: 62usize,
             permanent_scout_bees: 1usize,
-            local_limit: 20usize, //550usize seems to be the most optimal
+            local_limit: 220usize, //550usize seems to be the most optimal
             maximize: true,       //default to finding maximum value in input problem space
             min_max_value: f64::NEG_INFINITY,
             problem_space_bounds_inclusivity: "[]".to_string(), //default to inclusive upper and lower
-            thread_pool_size:available_parallelism().unwrap().get(),
+            thread_pool_size: available_parallelism().unwrap().get(),
             ..Default::default()
         }
+    }
+
+    // resets the other metadata and allows you to carry on with the same settings
+    //for a fresh run, just create a new() instance in a new scope, or drop the old instance
+    pub fn clear(mut self: Self)-> Self
+    {
+    self.problem_space_bounds=vec![[0.0f64; 2]]; //Cannot possibly be unbounded! Assumed stored as inclusive always [ub;lb]
+
+    //Optional Problem Space Metadata
+    self.known_minimum_value= None; //The minimum value of the function; if known (already-solved real-world problem/known test function). Defaults to Option::None.
+    self.known_minimum_point= None; //The minimum point coordinates of the function; if known (already-solved real-world problem/known test function). Defaults to Option::None.
+    self.fitness_function_name= String::from("");         //can be name of test function/real-world problem
+    self.fitness_function_description= String::from("");
+
+    //Optimization Algorithm metadata
+    self.algorithm_name= String::from(""); //Name of the algorithm being used
+    self.algorithm_description= String::from("");
+
+    //Performance data to be written AFTER the algorithm has finished running.
+    self.searches_made= 0; //how many iterations have been run. Default of 0
+    self.min_max_value= f64::NEG_INFINITY; //the minimum/maximum reward value found within problem space (single value). Default of 0.0
+    self.min_max_point= vec![]; //vector solution that will return min_max_value.
+    self
     }
 
     //Builder-pattern method to switch from maximization to minimization mode.
@@ -87,9 +109,9 @@ impl Optimizer {
         self
     }
 
-    pub fn set_thread_pool(mut self: Self, new_thread_pool_size:usize) ->Self {
-    self.thread_pool_size = new_thread_pool_size;
-    self
+    pub fn set_thread_pool(mut self: Self, new_thread_pool_size: usize) -> Self {
+        self.thread_pool_size = new_thread_pool_size;
+        self
     }
 
     //Builder-pattern method to set there to be no scout bees in case searches are overly expensive. NOT recommended.
@@ -206,15 +228,19 @@ impl Optimizer {
         //Start timer here
         let function_real_time = Instant::now();
 
-        //Set the thread pool size based on available threads. 
-        if self.thread_pool_size==1{
-        println!("Running with {} threads. To change, use the builder method set_thread_pool(desired_pool_size). For example: NewOptimizer::new().set_thread_pool(7)",self.thread_pool_size);}
-        else
-        {
-        println!("Running in parallel with {} threads.", self.thread_pool_size)
+        //Set the thread pool size based on available threads.
+        if self.thread_pool_size == 1 {
+            println!("Running with {} threads. To change, use the builder method set_thread_pool(desired_pool_size). For example: NewOptimizer::new().set_thread_pool(7)",self.thread_pool_size);
+        } else {
+            println!(
+                "Running in parallel with {} threads.",
+                self.thread_pool_size
+            )
         }
-        let thread_pool=rayon::ThreadPoolBuilder::new().num_threads(self.thread_pool_size).build().unwrap();
-
+        let thread_pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(self.thread_pool_size)
+            .build()
+            .unwrap();
 
         //Set metadata for this function.
         self.problem_space_bounds = problem_space_bounds.to_vec();
@@ -240,7 +266,6 @@ impl Optimizer {
         let minmax_factor = if self.maximize { 1.0f64 } else { -1.0f64 };
 
         //Add actions to ALWAYS be performed with each search to avoid further indirection from closures/function nesting.
-        //TODO: Parallelize/add concurrency to the algorithm
         macro_rules! perform_search {
             ($x:expr) => {{
             //perform all other actions here
@@ -269,28 +294,27 @@ impl Optimizer {
             }};
         }
         macro_rules! update_metadata {
-        ($vec_fitness_value:expr,$input_vector:expr,$searches_performed:expr) =>{{
-            //perform all other actions here
+            ($vec_fitness_value:expr,$input_vector:expr,$searches_performed:expr) => {{
+                //perform all other actions here
                 //Get maximum value and coordinates of fitness value
-                let (max_index,max_value) = $vec_fitness_value
-                            .iter()
-                            .enumerate()
-                            .max_by(|(_, a), (_, b)| a.total_cmp(b))
-                            .unwrap();
-                
+                let (max_index, max_value) = $vec_fitness_value
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| a.total_cmp(b))
+                    .unwrap();
+
+                //Note: max_value was previously already multiplied by the minmax_factor
+
                 //Update number of searches made
                 self.searches_made += $searches_performed as u64;
-                
-                let adjusted_results=minmax_factor*max_value;
 
                 //update metadata for max value and the vector that returns that value
-                if (adjusted_results) > (minmax_factor * self.min_max_value) {
-                    self.min_max_value = *max_value;
+
+                if (*max_value) > (minmax_factor * self.min_max_value) {
+                    self.min_max_value = minmax_factor*max_value;
                     self.min_max_point = $input_vector[max_index].clone();
                 }
-
-               
-        }};
+            }};
         }
 
         //Set up RNG
@@ -308,7 +332,7 @@ impl Optimizer {
         //Generate intial solutions
         //TODO: Possibly make this parallel as well.
         for each_search_point in employed_bees_searches.iter_mut() {
-            for (idx,dimension) in each_search_point.iter_mut().enumerate() {
+            for (idx, dimension) in each_search_point.iter_mut().enumerate() {
                 //for every single dimension
                 *dimension = random_generator
                     .gen_range::<f64, _>(adjusted_bounds[idx][0]..adjusted_bounds[idx][1])
@@ -316,17 +340,29 @@ impl Optimizer {
             }
         }
 
-        let mut trial_search_points =
-            vec![vec![0.0f64; self.number_of_dimensions]; self.employed_bees]; //Create an intermediate copy of the searches already made.
+        //Create an intermediate copy of the searches already made.
+        let mut trial_search_points = employed_bees_searches.clone();
+        //vec![vec![0.0f64; self.number_of_dimensions]; self.employed_bees]; //Create an intermediate copy of the searches already made.
 
         //Perform initial search with employed bees on every single point
-        let mut food_source_values: Vec<f64> = thread_pool.install(|| employed_bees_searches
-            .par_iter()
-            .map(|x| -> f64 { perform_search!(x) })
-            .collect());
+        let mut food_source_values: Vec<f64> = thread_pool.install(|| {
+            employed_bees_searches
+                .par_iter()
+                .map(|x| -> f64 { perform_search!(x) })
+                .collect()
+        });
         let mut normalized_food_source_values = vec![0.0f64; self.employed_bees];
 
-        update_metadata!(food_source_values,employed_bees_searches,employed_bees_searches.len());
+        update_metadata!(
+            food_source_values,
+            employed_bees_searches,
+            employed_bees_searches.len()
+        );
+
+        //Create an intermediate vector to hold the searches made for onlooker bees
+        let mut onlooker_trial_search_points =
+            vec![vec![0.0f64; self.number_of_dimensions]; self.onlooker_bees];
+        let mut onlooker_mapping_to_employed = vec![0usize; self.onlooker_bees];
 
         //create a vector to keep track of number of attempts made per food source
         let mut attempts_per_food_source = vec![1usize; self.employed_bees];
@@ -344,7 +380,10 @@ impl Optimizer {
             vec![f64::NEG_INFINITY; self.permanent_scout_bees];
 
         let mut exceeded_max: Vec<usize> = vec![]; //Blank index that will contain (Index of points > max tries, )
-        
+        let mut temporary_scout_searches: Vec<Vec<f64>> = vec![];
+
+        let mut chosen_dimension_vec = vec![0usize; self.employed_bees];
+        let mut onlooker_chosen_dimension_vec = vec![0usize; self.onlooker_bees];
         //Loop through the algorithm here
         for iteration in 0..self.max_generations {
             //next: vij = xij + φij(xij − xkj), Modify initial positions and search again:
@@ -362,8 +401,10 @@ impl Optimizer {
                 attempts_per_food_source[i] += 1;
 
                 //For every single employed bee
-                //Select a random dimension
-                let dimension: usize = random_generator.gen_range(0..self.number_of_dimensions);
+                //Select a random chosen_dimension
+                let chosen_dimension: usize =
+                    random_generator.gen_range(0..self.number_of_dimensions);
+                chosen_dimension_vec[i] = chosen_dimension;
 
                 //Select the index for an existing random food source
                 let mut random_solution_index: usize =
@@ -373,42 +414,63 @@ impl Optimizer {
                 }
 
                 // Modify initial positions by xij + phi_ij(xij − xkj)
-                let existing_sol = employed_bees_searches[i][dimension];
+                let existing_sol = employed_bees_searches[i][chosen_dimension];
 
                 //Modify
                 let tentative_new = existing_sol
                     + (random_generator.gen_range::<f64, _>(-1.0..1.0000000000000002) //1.0000000000000002 is the smallest next value after 1f64
-                        * (existing_sol - employed_bees_searches[random_solution_index][dimension]));
+                        * (existing_sol - employed_bees_searches[random_solution_index][chosen_dimension]));
 
                 //Check if out of bounds, if they are out of bounds set them to those bounds (Karaboga et al)
                 let (lower_bound, upper_bound) = (
-                    self.problem_space_bounds[dimension][0],
-                    self.problem_space_bounds[dimension][1],
+                    self.problem_space_bounds[chosen_dimension][0],
+                    self.problem_space_bounds[chosen_dimension][1],
                 );
 
                 if tentative_new < lower_bound {
-                    trial_search_points[i][dimension] = lower_bound;
+                    trial_search_points[i][chosen_dimension] = lower_bound;
                 } else if tentative_new > upper_bound {
-                    trial_search_points[i][dimension] = upper_bound;
+                    trial_search_points[i][chosen_dimension] = upper_bound;
                 } else {
-                    trial_search_points[i][dimension] = tentative_new;
+                    trial_search_points[i][chosen_dimension] = tentative_new;
                 }
+            }
+            //Run the searches in parallel
+            let new_search_vec: Vec<f64> = thread_pool.install(|| {
+                trial_search_points
+                    .par_iter()
+                    .map(|x| perform_search!(x))
+                    .collect()
+            });
+            // println!("attempts_per_food_source before={:?}",attempts_per_food_source);
+            // println!("trial_search_points before= {:?}",trial_search_points);
 
-                //compare new solutions to old ones
-                let new_search = perform_search!(&trial_search_points[i]);
-                if new_search > food_source_values[i] {
+            //Update the food source and trial search point values
+            for (idx, new_search) in new_search_vec.iter().enumerate() {
+                if *new_search > food_source_values[idx] {
                     // Update to new points if the new source has as higher fitness value
-                    employed_bees_searches[i][dimension] = trial_search_points[i][dimension];
+                    employed_bees_searches[idx][chosen_dimension_vec[idx]] =
+                        trial_search_points[idx][chosen_dimension_vec[idx]];
                     //Update to new fitness value too
-                    food_source_values[i] = new_search;
+                    food_source_values[idx] = *new_search;
                     //If a better value of the food source was found, set the counter to 0 again
-                    attempts_per_food_source[i] = 0;
+                    attempts_per_food_source[idx] = 0;
                 } else {
-                    //Revert trial_search_points[i][dimension] back to employed_bees_searches[i][dimension]
-                    trial_search_points[i][dimension] = employed_bees_searches[i][dimension];
+                    //Revert trial_search_points[i][chosen_dimension_vec[idx]] back to employed_bees_searches[i][chosen_dimension_vec[idx]]
+                    //Important because we will have to update from this same value later.
+                    trial_search_points[idx][chosen_dimension_vec[idx]] =
+                        employed_bees_searches[idx][chosen_dimension_vec[idx]];
                 };
             }
-            update_metadata!(food_source_values,employed_bees_searches,self.employed_bees);
+            // println!("trial_search_points after= {:?}",trial_search_points);
+            // println!("attempts_per_food_source={:?}",attempts_per_food_source);
+            // println!("employed_bees_searches={:?}",employed_bees_searches);
+            // println!("New Search Vec= {:?}", new_search_vec);
+            update_metadata!(
+                food_source_values,
+                employed_bees_searches,
+                self.employed_bees
+            );
 
             //calculate probability for onlooker bees
             //Normalize values (if there are negative values, add the (modulus of the smallest negative value) +1)
@@ -416,7 +478,7 @@ impl Optimizer {
                 .iter()
                 .min_by(|a, b| a.partial_cmp(b).unwrap())
                 .unwrap()
-                .abs(); //TODO: Optimize code finding smallest negative value
+                .abs();
 
             normalized_food_source_values = food_source_values
                 .iter()
@@ -425,15 +487,21 @@ impl Optimizer {
 
             let weighted_selection = WeightedIndex::new(&normalized_food_source_values).unwrap();
 
+            //TODO: Make sure this is ALL  correct for ONLOOKER bees!!!!
             //Set onlooker bees based on probability
             for j in 0..self.onlooker_bees {
                 //For every single onlooker bee
                 //Select a random dimension
                 let dimension: usize = random_generator.gen_range(0..self.number_of_dimensions);
+                onlooker_chosen_dimension_vec[j] = dimension;
 
-                //Existing position selected using fit_i/Epsilon_SN__j=1 fit_j
+                //Existing position in employed_bees_searches selected using fit_i/Epsilon_SN__j=1 fit_j
                 let selected_existing_position_idx =
                     weighted_selection.sample(&mut random_generator);
+
+                onlooker_trial_search_points[j] =
+                    employed_bees_searches[selected_existing_position_idx].clone();
+                onlooker_mapping_to_employed[j] = selected_existing_position_idx; //make sure we know which belongs to which -- makes parallelism possible
 
                 //Select the index for an existing random food source
                 let mut random_solution_index: usize =
@@ -459,34 +527,62 @@ impl Optimizer {
                 );
 
                 if tentative_new < lower_bound {
-                    trial_search_points[selected_existing_position_idx][dimension] = lower_bound;
+                    onlooker_trial_search_points[j][dimension] = lower_bound;
                 } else if tentative_new > upper_bound {
-                    trial_search_points[selected_existing_position_idx][dimension] = upper_bound;
+                    onlooker_trial_search_points[j][dimension] = upper_bound;
                 } else {
-                    trial_search_points[selected_existing_position_idx][dimension] = tentative_new;
+                    onlooker_trial_search_points[j][dimension] = tentative_new;
                 }
-
+                ////////////////////////
                 //compare new solutions to old ones
-                let new_search =
-                    perform_search!(&trial_search_points[selected_existing_position_idx]);
-                if new_search > food_source_values[selected_existing_position_idx] {
-                    //Update to new points if the new source has as higher fitness value
-                    employed_bees_searches[selected_existing_position_idx][dimension] =
-                        trial_search_points[selected_existing_position_idx][dimension];
+                // let new_search =
+                //     perform_search!(&onlooker_trial_search_points[selected_existing_position_idx]);
+                // if new_search > food_source_values[selected_existing_position_idx] {
+                //     //Update to new points if the new source has as higher fitness value
+                //     employed_bees_searches[selected_existing_position_idx][dimension] =
+                //         onlooker_trial_search_points[selected_existing_position_idx][dimension];
 
+                //     //Update to new fitness value too
+                //     food_source_values[selected_existing_position_idx] = new_search;
+
+                //     //If a better value of the food source was found, set the counter to 0 again
+                //     attempts_per_food_source[selected_existing_position_idx] = 0;
+                // } else {
+                //     //Revert onlooker_trial_search_points[selecterd_existing_position_idx][dimension] back to employed_bees_searches[selected_existing_position_idx][dimension]
+                //     onlooker_trial_search_points[selected_existing_position_idx][dimension] =
+                //         employed_bees_searches[selected_existing_position_idx][dimension];
+                // };
+            }
+            //Run searches in parallel
+            let new_search_vec: Vec<f64> = thread_pool.install(|| {
+                onlooker_trial_search_points
+                    .par_iter()
+                    .map(|x| perform_search!(x))
+                    .collect()
+            });
+
+            for (idx, new_search) in new_search_vec.iter().enumerate() {
+                if *new_search > food_source_values[onlooker_mapping_to_employed[idx]] {
+                    // Update to new points if the new source has as higher fitness value
+                    employed_bees_searches[onlooker_mapping_to_employed[idx]]
+                        [onlooker_chosen_dimension_vec[idx]] =
+                        onlooker_trial_search_points[idx][onlooker_chosen_dimension_vec[idx]];
                     //Update to new fitness value too
-                    food_source_values[selected_existing_position_idx] = new_search;
-
+                    food_source_values[onlooker_mapping_to_employed[idx]] = *new_search;
                     //If a better value of the food source was found, set the counter to 0 again
-                    attempts_per_food_source[selected_existing_position_idx] = 0;
+                    attempts_per_food_source[onlooker_mapping_to_employed[idx]] = 0;
                 } else {
-                    //Revert trial_search_points[selecterd_existing_position_idx][dimension] back to employed_bees_searches[selecterd_existing_position_idx][dimension]
-                    trial_search_points[selected_existing_position_idx][dimension] =
-                        employed_bees_searches[selected_existing_position_idx][dimension];
+                    //Revert onlooker_trial_search_points[i][onlooker_chosen_dimension_vec[idx]] back to employed_bees_searches[i][onlooker_chosen_dimension_vec[idx]]
+                    //onlooker_trial_search_points[idx][onlooker_chosen_dimension_vec[idx]] = employed_bees_searches[onlooker_mapping_to_employed[idx]][onlooker_chosen_dimension_vec[idx]];
+                    //no need to do anything here, as onlooker_trial_search_points[j] will be assigned afresh with each iteration
                 };
             }
 
-            update_metadata!(food_source_values,employed_bees_searches,self.onlooker_bees);
+            update_metadata!(
+                food_source_values,
+                employed_bees_searches,
+                self.onlooker_bees //number of searches performed
+            );
 
             //Send Scout Bee out
             if self.permanent_scout_bees > 0 {
@@ -501,17 +597,37 @@ impl Optimizer {
                         //generate random values within problem space bounds.
                     }
 
-                    //Perform search
-                    let new_search = perform_search!(&trial_scout_bees_searches[k]);
-                    //If replace with new value if search result is better. Started with f64::NEG_INFINITY
-                    if new_search > scout_food_sources_values[k] {
-                        scout_bees_searches[k] = trial_scout_bees_searches[k].clone(); //replace with new position if return is higher
-                        scout_food_sources_values[k] = new_search; //replace with new value if return is higher
+                    // //Perform search
+                    // let new_search = perform_search!(&trial_scout_bees_searches[k]);
+                    // //If replace with new value if search result is better. Started with f64::NEG_INFINITY
+                    // if new_search > scout_food_sources_values[k] {
+                    //     scout_bees_searches[k] = trial_scout_bees_searches[k].clone(); //replace with new position if return is higher
+                    //     scout_food_sources_values[k] = new_search; //replace with new value if return is higher
+                    // }
+                }
+
+                //Perform search
+                let new_search_vec: Vec<f64> = thread_pool.install(|| {
+                    trial_scout_bees_searches
+                        .par_iter()
+                        .map(|x| perform_search!(x))
+                        .collect()
+                });
+
+                update_metadata!(
+                    food_source_values,
+                    employed_bees_searches,
+                    self.permanent_scout_bees
+                );
+
+                //If replace with new value if search result is better. Started with f64::NEG_INFINITY
+                for (idx, new_search) in new_search_vec.iter().enumerate() {
+                    if *new_search > scout_food_sources_values[idx] {
+                        scout_bees_searches[idx] = trial_scout_bees_searches[idx].clone(); //replace with new position if return is higher
+                        scout_food_sources_values[idx] = *new_search; //replace with new value if return is higher
                     }
                 }
-            update_metadata!(food_source_values,employed_bees_searches,self.permanent_scout_bees);
             }
-
 
             //Check to see if maximum iterations has been reached for any bee
             for (idx, item) in attempts_per_food_source.iter_mut().enumerate() {
@@ -520,23 +636,27 @@ impl Optimizer {
                 };
             }
 
+            //only executed if max_length is exceeded.
             if exceeded_max.len() > 0 {
-                //set food sources to scout food sources
+                //set food sources to existing permanent scout food sources
                 let mut permanent_scout_bees_counter = self.permanent_scout_bees;
-                //println!("The food sources that have been abandoned are: {:?}",exceeded_max);
+                // println!(
+                //     "The food sources that have been abandoned are: {:?}",
+                //     exceeded_max
+                // );
                 for i in exceeded_max.iter() {
                     if permanent_scout_bees_counter > 0 {
                         //Get max food source index and value. Not the most efficient way, but has negligible
                         //time costs as the number of scout bees is small.
-                        let (max_index,max_value) = scout_food_sources_values
+                        let (max_index, max_value) = scout_food_sources_values
                             .iter()
                             .enumerate()
                             .max_by(|(_, a), (_, b)| a.total_cmp(b))
                             .unwrap();
-                            // println!("all values are: {:?}",scout_food_sources_values);
-                            // println!("my value is {}",value);
-                            // .map(|(index, _)| index)
-                            // .unwrap();
+                        // println!("all values are: {:?}",scout_food_sources_values);
+                        // println!("my value is {}",value);
+                        // .map(|(index, _)| index)
+                        // .unwrap();
                         food_source_values[*i] = *max_value;
                         employed_bees_searches[*i] = scout_bees_searches[max_index].clone();
                         //println!("Scout Bee {} deployed for abandoned food source {}",permanent_scout_bees_counter,*i);
@@ -546,8 +666,9 @@ impl Optimizer {
                         permanent_scout_bees_counter -= 1;
                         continue;
                     }
-                    //Once the scout bee(s) food source(s) have been taken, turn employed bees to scouts
-                    //println!("Converting employed bee to new scout bee number {}", *i);
+
+                    //Once the scout bee(s) food source(s) have been taken, turn employed bees to temporary_scouts
+                    // println!("Converting employed bee to new scout bee number {}", *i);
                     //Generate initial solutions -> randomly reach out with the employee turned scout bee
                     for (idx, each_dimension) in employed_bees_searches[*i].iter_mut().enumerate() {
                         //for every single dimension, generate random values within problem space bounds.
@@ -555,15 +676,37 @@ impl Optimizer {
                             .gen_range::<f64, _>(adjusted_bounds[idx][0]..adjusted_bounds[idx][1])
                     }
 
+                    temporary_scout_searches.push(employed_bees_searches[*i].clone());
                     //Perform search
                     //println!("Performing search for position {}",*i); //Tested to be OK, does not run if scout bees' solutions have been written
-                    food_source_values[*i] = perform_search!(&employed_bees_searches[*i]);
+                    //food_source_values[*i] = perform_search!(&employed_bees_searches[*i]);
                 }
-            update_metadata!(food_source_values,employed_bees_searches,exceeded_max.len());
-            }
-            exceeded_max.clear(); //Reset the counters here
 
-            //TODO: you are here.
+                //To be run only if the number of food sources that exceeded their max limit is greater than the number of permanent scout bees on duty
+                let temporary_scout_food: Vec<f64> = thread_pool.install(|| {
+                    temporary_scout_searches
+                        .par_iter()
+                        .map(|x| perform_search!(x))
+                        .collect()
+                });
+                for idx in self.permanent_scout_bees..exceeded_max.len() {
+                    //exceeded_max contains the INDEX values for food_source_values that need to be replaced.
+                    food_source_values[exceeded_max[idx]] =
+                        temporary_scout_food[idx - self.permanent_scout_bees];  //Deduct by the offset caused by the permanent_scout_bees
+                    // println!(
+                    //     "Replacing with temporary_scout_food number {}",
+                    //     idx - self.permanent_scout_bees
+                    // );
+                }
+
+                update_metadata!(
+                    food_source_values,
+                    employed_bees_searches,
+                    exceeded_max.len()
+                );
+            }
+            exceeded_max.clear(); //Reset the counters for which dimensions have exceeded maximum here, as we have already dealt with them
+            temporary_scout_searches.clear() //reset the vector that holds the temporary scout searches
 
             //TODO: Reapply the negative sign if you went for minimization instead of maximization
         }
@@ -612,7 +755,7 @@ mod search_algos {
         //problem_space_bounds = Optimizer::set_bounds(&problem_space_bounds, "[]");
 
         //create new instance of struct
-        let mut optimize_rana = Optimizer::new().minimize().set_thread_pool(38);
+        let mut optimize_rana = Optimizer::new().minimize().set_thread_pool(1);
 
         //set custom metadata. Should be fine even if it's commented out.
         optimize_rana.fitness_function_name = String::from("rana");
@@ -633,7 +776,7 @@ mod search_algos {
         //Run optimization function here.
         optimize_rana.classic_abc(
             &problem_space_bounds,
-            1u64,                //Max number of generations
+            100u64,               //Max number of generations
             benchmark_algos::rana, //name of fitness function
         );
 
@@ -642,6 +785,59 @@ mod search_algos {
 
         println!("\n\nObject={:#?}\n\n", optimize_rana);
     }
+
+    #[test]
+    fn test_classic_abc_all(){
+        //#region
+        //Set up problem space bounds
+
+        let mut problem_space_bounds = vec![
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+        ];
+
+        //Lower and upper bound inclusive
+        //problem_space_bounds = Optimizer::set_bounds(&problem_space_bounds, "[]");
+
+        //create new instance of struct
+        let mut optimize_multiple = Optimizer::new().minimize().set_thread_pool(38);
+
+        //set custom metadata. Should be fine even if it's commented out.
+        optimize_multiple.fitness_function_name = String::from("rana");
+        optimize_multiple.fitness_function_description=String::from("N-dimensional, multimodal. Range = [-512,512] for all dimensions. minimum point for 2D: `[-488.632577, 512]`  Minimum value for 2D=-511.7328819,  Minimum point for 7D: `[-512, -512, -512, -512, -512, -512, -511.995602]` minimum value for 7D=-3070.2475210");
+        optimize_multiple.known_minimum_value = Some(-3070.2475210);
+        optimize_multiple.permanent_scout_bees = 2usize;
+        optimize_multiple.known_minimum_point = Some(vec![
+            -512.0,
+            -512.0,
+            -512.0,
+            -512.0,
+            -512.0,
+            -512.0,
+            -511.995602,
+        ]);
+
+        //#endregion
+        //Run optimization function here.
+        optimize_multiple.classic_abc(
+            &problem_space_bounds,
+            3100u64,               //Max number of generations
+            benchmark_algos::rana, //name of fitness function
+        );
+
+        println!("\nTime taken ={:?}\n", optimize_multiple.real_time_taken);
+        //println!("Time taken in seconds ={}",optimize_rana.real_time_taken.as_secs());
+
+        println!("\n\nObject={:#?}\n\n", optimize_multiple);
+    }
+
+
+    
 
     #[test]
     fn run_code() {
