@@ -27,7 +27,7 @@ pub struct Optimizer {
     pub local_limit: usize, //Limit for how many times a food source can be exploited before being abandoned.
     pub problem_space_bounds_inclusivity: String,
     pub ignore_nan: bool, //ignore nan values from input function. Will almost certainly lead to unpredictable behavior.
-    pub thread_pool_size: usize, //size of the thread pool
+    thread_pool_size: usize, //size of the thread pool
 
     //Problem Space metadata
     //Calculated from length of problem_space_bounds.
@@ -108,7 +108,8 @@ impl Optimizer {
         self.min_max_value = f64::INFINITY;
         self
     }
-
+    
+    //should strongly recommend user allow the system to decide for them
     pub fn set_thread_pool(mut self: Self, new_thread_pool_size: usize) -> Self {
         self.thread_pool_size = new_thread_pool_size;
         self
@@ -755,7 +756,7 @@ mod search_algos {
         //problem_space_bounds = Optimizer::set_bounds(&problem_space_bounds, "[]");
 
         //create new instance of struct
-        let mut optimize_rana = Optimizer::new().minimize().set_thread_pool(1);
+        let mut optimize_rana = Optimizer::new().minimize().set_thread_pool(62); //should strongly recommend user allow the system to decide for them
 
         //set custom metadata. Should be fine even if it's commented out.
         optimize_rana.fitness_function_name = String::from("rana");
@@ -805,7 +806,7 @@ mod search_algos {
         //problem_space_bounds = Optimizer::set_bounds(&problem_space_bounds, "[]");
 
         //create new instance of struct
-        let mut optimize_multiple = Optimizer::new().minimize().set_thread_pool(38);
+        let mut optimize_multiple = Optimizer::new().minimize().set_thread_pool(62);
 
         //set custom metadata. Should be fine even if it's commented out.
         optimize_multiple.fitness_function_name = String::from("rana");
@@ -826,7 +827,7 @@ mod search_algos {
         //Run optimization function here.
         optimize_multiple.classic_abc(
             &problem_space_bounds,
-            3100u64,               //Max number of generations
+            100u64,               //Max number of generations
             benchmark_algos::rana, //name of fitness function
         );
 
