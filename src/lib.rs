@@ -307,11 +307,11 @@ impl Optimizer {
 
         //Generate intial solutions
         //TODO: Possibly make this parallel as well.
-        for each_search_point in &mut employed_bees_searches {
-            for i in 0..self.number_of_dimensions {
+        for each_search_point in employed_bees_searches.iter_mut() {
+            for (idx,dimension) in each_search_point.iter_mut().enumerate() {
                 //for every single dimension
-                each_search_point[i] = random_generator
-                    .gen_range::<f64, _>(adjusted_bounds[i][0]..adjusted_bounds[i][1])
+                *dimension = random_generator
+                    .gen_range::<f64, _>(adjusted_bounds[idx][0]..adjusted_bounds[idx][1])
                 //generate random values within problem space bounds.
             }
         }
@@ -612,7 +612,7 @@ mod search_algos {
         //problem_space_bounds = Optimizer::set_bounds(&problem_space_bounds, "[]");
 
         //create new instance of struct
-        let mut optimize_rana = Optimizer::new().minimize().set_thread_pool(1);
+        let mut optimize_rana = Optimizer::new().minimize().set_thread_pool(38);
 
         //set custom metadata. Should be fine even if it's commented out.
         optimize_rana.fitness_function_name = String::from("rana");
