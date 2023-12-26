@@ -497,14 +497,15 @@ impl Optimizer {
                         //for every single dimension, generate random values within problem space bounds.
                         *each_dimension = random_generator
                             .gen_range::<f64, _>(adjusted_bounds[idx][0]..adjusted_bounds[idx][1])
+                    
                     }
 
                     //Perform search
+                    //println!("Performing search for position {}",*i); //Tested to be OK, does not run if scout bees' solutions have been written
                     food_source_values[*i] = perform_search!(&employed_bees_searches[*i]);
+
                 }
-                println!("\n\n");
-                //for j in exceeded_max.iter_par() {
-                //food_source_values[*j] = perform_search!(&employed_bees_searches[*j]);}
+                
             }
             exceeded_max.clear(); //Reset the counters here
 
@@ -513,12 +514,6 @@ impl Optimizer {
             //TODO: Reapply the negative sign if you went for minimization instead of maximization
         }
 
-        //Finish off here with the rest of the metadata
-        let index = food_source_values
-            .iter()
-            .enumerate()
-            .max_by(|(_, a), (_, b)| a.total_cmp(b))
-            .map(|(index, _)| index);
 
         self.real_time_taken = function_real_time.elapsed();
     }
