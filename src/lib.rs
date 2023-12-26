@@ -9,8 +9,10 @@
 mod benchmark_algos;
 use rand::{distributions::Distribution, distributions::WeightedIndex, Rng};
 use rayon::prelude::*;
-use std::thread;
+//use std::thread;
+use std::thread::available_parallelism;
 use std::time::{Duration, Instant};
+
 
 #[derive(Default, Debug)]
 pub struct Optimizer {
@@ -26,6 +28,7 @@ pub struct Optimizer {
     pub local_limit: usize, //Limit for how many times a food source can be exploited before being abandoned.
     pub problem_space_bounds_inclusivity: String,
     pub ignore_nan: bool, //ignore nan values from input function. Will almost certainly lead to unpredictable behavior.
+    pub thread_pool_size: usize, //size of the thread pool
 
     //Problem Space metadata
     //Calculated from length of problem_space_bounds.
@@ -65,13 +68,14 @@ impl Optimizer {
     //default constructor ->MUST be used to create an instance of Optimizer
     pub fn new() -> Self {
         Self {
-            employed_bees: 62usize, //Default values for employed, onlooker, and scout bees as recommended in the source paper.
-            onlooker_bees: 62usize,
+            employed_bees: 12usize, //Default values for employed, onlooker, and scout bees as recommended in the source paper.
+            onlooker_bees: 12usize,
             permanent_scout_bees: 1usize,
             local_limit: 20usize, //550usize seems to be the most optimal
-            maximize: true,        //default to finding maximum value in input problem space
+            maximize: true,       //default to finding maximum value in input problem space
             min_max_value: f64::NEG_INFINITY,
             problem_space_bounds_inclusivity: "[]".to_string(), //default to inclusive upper and lower
+            thread_pool_size:available_parallelism().unwrap().get(),
             ..Default::default()
         }
     }
@@ -81,6 +85,11 @@ impl Optimizer {
         self.maximize = false;
         self.min_max_value = f64::INFINITY;
         self
+    }
+
+    pub fn set_thread_pool(mut self: Self, new_thread_pool_size:usize) ->Self {
+    self.thread_pool_size = new_thread_pool_size;
+    self
     }
 
     //Builder-pattern method to set there to be no scout bees in case searches are overly expensive. NOT recommended.
@@ -196,6 +205,17 @@ impl Optimizer {
         //     Optimizer::default_initializer(problem_space_bounds, max_generations);//, other_args);
         //Start timer here
         let function_real_time = Instant::now();
+
+        //Set the thread pool size based on available threads. 
+        if self.thread_pool_size==1{
+        println!("Running with {} threads. To change, use the builder method set_thread_pool(desired_pool_size). For example: NewOptimizer::new().set_thread_pool(7)",self.thread_pool_size);}
+        else
+        {
+        println!("Running in parallel with {} threads.", self.thread_pool_size)
+        }
+        let thread_pool=rayon::ThreadPoolBuilder::new().num_threads(self.thread_pool_size).build().unwrap();
+
+
         //Set metadata for this function.
         self.problem_space_bounds = problem_space_bounds.to_vec();
         let adjusted_bounds = Optimizer::set_bounds(
@@ -224,14 +244,15 @@ impl Optimizer {
         macro_rules! perform_search {
             ($x:expr) => {{
             //perform all other actions here
-                self.searches_made += 1; 
+
                 let results = fitness_function($x);     //ONLY fitness function runs will be performed in parallel. All else is assumed to be cheap & controllable.
+                //self.searches_made += 1;
                 let adjusted_results=minmax_factor*results;
 
-                if (adjusted_results) > (minmax_factor * self.min_max_value) {
-                    self.min_max_value = results;
-                    self.min_max_point = $x.clone();
-                }
+                // if (adjusted_results) > (minmax_factor * self.min_max_value) {
+                //     self.min_max_value = results;
+                //     self.min_max_point = $x.clone();
+                // }
 
                 //Check if results are nan
                 if adjusted_results.is_nan() {
@@ -247,6 +268,30 @@ impl Optimizer {
                 adjusted_results //MUST return this at the very end
             }};
         }
+        macro_rules! update_metadata {
+        ($vec_fitness_value:expr,$input_vector:expr,$searches_performed:expr) =>{{
+            //perform all other actions here
+                //Get maximum value and coordinates of fitness value
+                let (max_index,max_value) = $vec_fitness_value
+                            .iter()
+                            .enumerate()
+                            .max_by(|(_, a), (_, b)| a.total_cmp(b))
+                            .unwrap();
+                
+                //Update number of searches made
+                self.searches_made += $searches_performed as u64;
+                
+                let adjusted_results=minmax_factor*max_value;
+
+                //update metadata for max value and the vector that returns that value
+                if (adjusted_results) > (minmax_factor * self.min_max_value) {
+                    self.min_max_value = *max_value;
+                    self.min_max_point = $input_vector[max_index].clone();
+                }
+
+               
+        }};
+        }
 
         //Set up RNG
         let mut random_generator = rand::thread_rng();
@@ -261,6 +306,7 @@ impl Optimizer {
             vec![vec![0.0f64; self.number_of_dimensions]; self.employed_bees];
 
         //Generate intial solutions
+        //TODO: Possibly make this parallel as well.
         for each_search_point in &mut employed_bees_searches {
             for i in 0..self.number_of_dimensions {
                 //for every single dimension
@@ -274,11 +320,13 @@ impl Optimizer {
             vec![vec![0.0f64; self.number_of_dimensions]; self.employed_bees]; //Create an intermediate copy of the searches already made.
 
         //Perform initial search with employed bees on every single point
-        let mut food_source_values: Vec<f64> = employed_bees_searches
-            .iter()
+        let mut food_source_values: Vec<f64> = thread_pool.install(|| employed_bees_searches
+            .par_iter()
             .map(|x| -> f64 { perform_search!(x) })
-            .collect();
+            .collect());
         let mut normalized_food_source_values = vec![0.0f64; self.employed_bees];
+
+        update_metadata!(food_source_values,employed_bees_searches,employed_bees_searches.len());
 
         //create a vector to keep track of number of attempts made per food source
         let mut attempts_per_food_source = vec![1usize; self.employed_bees];
@@ -296,7 +344,7 @@ impl Optimizer {
             vec![f64::NEG_INFINITY; self.permanent_scout_bees];
 
         let mut exceeded_max: Vec<usize> = vec![]; //Blank index that will contain (Index of points > max tries, )
-
+        
         //Loop through the algorithm here
         for iteration in 0..self.max_generations {
             //next: vij = xij + φij(xij − xkj), Modify initial positions and search again:
@@ -360,6 +408,7 @@ impl Optimizer {
                     trial_search_points[i][dimension] = employed_bees_searches[i][dimension];
                 };
             }
+            update_metadata!(food_source_values,employed_bees_searches,self.employed_bees);
 
             //calculate probability for onlooker bees
             //Normalize values (if there are negative values, add the (modulus of the smallest negative value) +1)
@@ -437,6 +486,8 @@ impl Optimizer {
                 };
             }
 
+            update_metadata!(food_source_values,employed_bees_searches,self.onlooker_bees);
+
             //Send Scout Bee out
             if self.permanent_scout_bees > 0 {
                 //So long as there is 1 or more scout bee:
@@ -458,7 +509,9 @@ impl Optimizer {
                         scout_food_sources_values[k] = new_search; //replace with new value if return is higher
                     }
                 }
+            update_metadata!(food_source_values,employed_bees_searches,self.permanent_scout_bees);
             }
+
 
             //Check to see if maximum iterations has been reached for any bee
             for (idx, item) in attempts_per_food_source.iter_mut().enumerate() {
@@ -473,22 +526,25 @@ impl Optimizer {
                 //println!("The food sources that have been abandoned are: {:?}",exceeded_max);
                 for i in exceeded_max.iter() {
                     if permanent_scout_bees_counter > 0 {
-                        //Get max food source index. Not the most efficient way, but has negligible
+                        //Get max food source index and value. Not the most efficient way, but has negligible
                         //time costs as the number of scout bees is small.
-                        let max_index = scout_food_sources_values
+                        let (max_index,max_value) = scout_food_sources_values
                             .iter()
                             .enumerate()
                             .max_by(|(_, a), (_, b)| a.total_cmp(b))
-                            .map(|(index, _)| index)
                             .unwrap();
-                        food_source_values[*i] = scout_food_sources_values[max_index];
+                            // println!("all values are: {:?}",scout_food_sources_values);
+                            // println!("my value is {}",value);
+                            // .map(|(index, _)| index)
+                            // .unwrap();
+                        food_source_values[*i] = *max_value;
                         employed_bees_searches[*i] = scout_bees_searches[max_index].clone();
                         //println!("Scout Bee {} deployed for abandoned food source {}",permanent_scout_bees_counter,*i);
 
                         //reset scout bee memory for the scout bee that was taken
                         scout_food_sources_values[max_index] = f64::NEG_INFINITY;
                         permanent_scout_bees_counter -= 1;
-                        continue
+                        continue;
                     }
                     //Once the scout bee(s) food source(s) have been taken, turn employed bees to scouts
                     //println!("Converting employed bee to new scout bee number {}", *i);
@@ -497,15 +553,13 @@ impl Optimizer {
                         //for every single dimension, generate random values within problem space bounds.
                         *each_dimension = random_generator
                             .gen_range::<f64, _>(adjusted_bounds[idx][0]..adjusted_bounds[idx][1])
-                    
                     }
 
                     //Perform search
                     //println!("Performing search for position {}",*i); //Tested to be OK, does not run if scout bees' solutions have been written
                     food_source_values[*i] = perform_search!(&employed_bees_searches[*i]);
-
                 }
-                
+            update_metadata!(food_source_values,employed_bees_searches,exceeded_max.len());
             }
             exceeded_max.clear(); //Reset the counters here
 
@@ -513,7 +567,6 @@ impl Optimizer {
 
             //TODO: Reapply the negative sign if you went for minimization instead of maximization
         }
-
 
         self.real_time_taken = function_real_time.elapsed();
     }
@@ -559,7 +612,7 @@ mod search_algos {
         //problem_space_bounds = Optimizer::set_bounds(&problem_space_bounds, "[]");
 
         //create new instance of struct
-        let mut optimize_rana = Optimizer::new().minimize();
+        let mut optimize_rana = Optimizer::new().minimize().set_thread_pool(1);
 
         //set custom metadata. Should be fine even if it's commented out.
         optimize_rana.fitness_function_name = String::from("rana");
@@ -580,7 +633,7 @@ mod search_algos {
         //Run optimization function here.
         optimize_rana.classic_abc(
             &problem_space_bounds,
-            450u64,                //Max number of generations
+            1u64,                //Max number of generations
             benchmark_algos::rana, //name of fitness function
         );
 
