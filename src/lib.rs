@@ -26,7 +26,6 @@ pub struct Optimizer {
     maximize: bool,                  //if true, maximize, if false, minimize
     pub local_limit: usize, //Limit for how many times a food source can be exploited before being abandoned.
     pub problem_space_bounds_inclusivity: String,
-    pub ignore_nan: bool, //ignore nan values from input function. Will almost certainly lead to unpredictable behavior.
     thread_pool_size: usize, //size of the thread pool
 
     //Problem Space metadata
@@ -43,7 +42,7 @@ pub struct Optimizer {
     pub algorithm_description: String,
 
     //Performance data to be written AFTER the algorithm has finished running.
-    pub searches_made: u64, //how many iterations have been run. Default of 0
+    pub searches_made: usize, //how many iterations have been run. Default of 0
     pub min_max_value: f64, //the minimum/maximum reward value found within problem space (single value). Default of 0.0
     pub min_max_point: Vec<f64>, //vector solution that will return min_max_value.
     pub real_time_taken: Duration, //Real time taken. Default of 0.0
@@ -71,7 +70,7 @@ impl Optimizer {
             onlooker_bees: 62usize,
             permanent_scout_bees: 1usize,
             local_limit: 220usize, //550usize seems to be the most optimal
-            maximize: true,       //default to finding maximum value in input problem space
+            maximize: true,        //default to finding maximum value in input problem space
             min_max_value: f64::NEG_INFINITY,
             problem_space_bounds_inclusivity: "[]".to_string(), //default to inclusive upper and lower
             thread_pool_size: available_parallelism().unwrap().get(),
@@ -81,25 +80,24 @@ impl Optimizer {
 
     // resets the other metadata and allows you to carry on with the same settings
     //for a fresh run, just create a new() instance in a new scope, or drop the old instance
-    pub fn clear(mut self: Self)-> Self
-    {
-    self.problem_space_bounds=vec![[0.0f64; 2]]; //Cannot possibly be unbounded! Assumed stored as inclusive always [ub;lb]
+    pub fn clear(mut self: Self) -> Self {
+        self.problem_space_bounds = vec![[0.0f64; 2]]; //Cannot possibly be unbounded! Assumed stored as inclusive always [ub;lb]
 
-    //Optional Problem Space Metadata
-    self.known_minimum_value= None; //The minimum value of the function; if known (already-solved real-world problem/known test function). Defaults to Option::None.
-    self.known_minimum_point= None; //The minimum point coordinates of the function; if known (already-solved real-world problem/known test function). Defaults to Option::None.
-    self.fitness_function_name= String::from("");         //can be name of test function/real-world problem
-    self.fitness_function_description= String::from("");
+        //Optional Problem Space Metadata
+        self.known_minimum_value = None; //The minimum value of the function; if known (already-solved real-world problem/known test function). Defaults to Option::None.
+        self.known_minimum_point = None; //The minimum point coordinates of the function; if known (already-solved real-world problem/known test function). Defaults to Option::None.
+        self.fitness_function_name = String::from(""); //can be name of test function/real-world problem
+        self.fitness_function_description = String::from("");
 
-    //Optimization Algorithm metadata
-    self.algorithm_name= String::from(""); //Name of the algorithm being used
-    self.algorithm_description= String::from("");
+        //Optimization Algorithm metadata
+        self.algorithm_name = String::from(""); //Name of the algorithm being used
+        self.algorithm_description = String::from("");
 
-    //Performance data to be written AFTER the algorithm has finished running.
-    self.searches_made= 0; //how many iterations have been run. Default of 0
-    self.min_max_value= f64::NEG_INFINITY; //the minimum/maximum reward value found within problem space (single value). Default of 0.0
-    self.min_max_point= vec![]; //vector solution that will return min_max_value.
-    self
+        //Performance data to be written AFTER the algorithm has finished running.
+        self.searches_made = 0; //how many iterations have been run. Default of 0
+        self.min_max_value = f64::NEG_INFINITY; //the minimum/maximum reward value found within problem space (single value). Default of 0.0
+        self.min_max_point = vec![]; //vector solution that will return min_max_value.
+        self
     }
 
     //Builder-pattern method to switch from maximization to minimization mode.
@@ -108,7 +106,7 @@ impl Optimizer {
         self.min_max_value = f64::INFINITY;
         self
     }
-    
+
     //should strongly recommend user allow the system to decide for them
     pub fn set_thread_pool(mut self: Self, new_thread_pool_size: usize) -> Self {
         self.thread_pool_size = new_thread_pool_size;
@@ -217,6 +215,43 @@ impl Optimizer {
         f64::from_bits(next_bits)
     }
 
+    fn update_metadata(
+        self: &mut Self,              //Updates Struct fields
+        vec_fitness_value: &Vec<f64>, //vector of fitness values
+        input_vector: &Vec<Vec<f64>>, //vector of coordinates matching vec_fitness_value
+        minmax_factor: f64,           //minmax factor value
+        searches_performed: usize,      //key in searches performed here
+    ) -> Result<String, String> //0 for ok, 1 for error
+    {
+        //perform all other actions here
+        //Get maximum value and coordinates of fitness value
+        let (max_index, max_value) = vec_fitness_value
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.total_cmp(b))
+            .unwrap();
+
+        //Note: max_value was previously already multiplied by the minmax_factor
+
+        //Update number of searches made
+        self.searches_made += searches_performed as usize;
+
+        //update metadata for max value and the vector that returns that value
+
+        match (*max_value) > (minmax_factor * self.min_max_value) {
+            true => {
+                self.min_max_value = minmax_factor * max_value;
+                self.min_max_point = input_vector[max_index].clone();
+
+                Ok(format!(
+                    "Max value updated to {} at {:?}",
+                    self.min_max_value, self.min_max_point
+                ))
+            }
+            _ => Ok(format!("No changes made.")),
+        }
+    }
+
     pub fn classic_abc(
         self: &mut Self,
         problem_space_bounds: &Vec<[f64; 2]>,
@@ -259,64 +294,9 @@ impl Optimizer {
         if self.employed_bees < 2 {
             panic!("Number of employed bees should be greater than or equal to 2");
         }
-        if self.ignore_nan {
-            println!("WARNING: flag ignore_nan() is on. The program will not panic upon encountering NaN from the fitness function, but erratic behavior/errors may happen further downstream.");
-        }
 
         //default of this algorithim is maximization, set to 'false' to minimize instead.
         let minmax_factor = if self.maximize { 1.0f64 } else { -1.0f64 };
-
-        //Add actions to ALWAYS be performed with each search to avoid further indirection from closures/function nesting.
-        macro_rules! perform_search {
-            ($x:expr) => {{
-            //perform all other actions here
-
-                let results = fitness_function($x);     //ONLY fitness function runs will be performed in parallel. All else is assumed to be cheap & controllable.
-                //self.searches_made += 1;
-                let adjusted_results=minmax_factor*results;
-
-                // if (adjusted_results) > (minmax_factor * self.min_max_value) {
-                //     self.min_max_value = results;
-                //     self.min_max_point = $x.clone();
-                // }
-
-                //Check if results are nan
-                if adjusted_results.is_nan() {
-                    if self.ignore_nan {
-                        println!("WARNING: Result from fitness function is NaN at  {:?}! f64::NEG_INFINITY/f64::infinity may be acceptable, but not NAN (0/0). This may lead to unpredictable behavior.",$x);
-                        }
-                        else{
-                        panic!("Value in fitness function was Nan. Input parameters were {:?} Aborting program.", $x);
-                        }
-
-                    //may consider
-                }
-                adjusted_results //MUST return this at the very end
-            }};
-        }
-        macro_rules! update_metadata {
-            ($vec_fitness_value:expr,$input_vector:expr,$searches_performed:expr) => {{
-                //perform all other actions here
-                //Get maximum value and coordinates of fitness value
-                let (max_index, max_value) = $vec_fitness_value
-                    .iter()
-                    .enumerate()
-                    .max_by(|(_, a), (_, b)| a.total_cmp(b))
-                    .unwrap();
-
-                //Note: max_value was previously already multiplied by the minmax_factor
-
-                //Update number of searches made
-                self.searches_made += $searches_performed as u64;
-
-                //update metadata for max value and the vector that returns that value
-
-                if (*max_value) > (minmax_factor * self.min_max_value) {
-                    self.min_max_value = minmax_factor*max_value;
-                    self.min_max_point = $input_vector[max_index].clone();
-                }
-            }};
-        }
 
         //Set up RNG
         let mut random_generator = rand::thread_rng();
@@ -349,15 +329,22 @@ impl Optimizer {
         let mut food_source_values: Vec<f64> = thread_pool.install(|| {
             employed_bees_searches
                 .par_iter()
-                .map(|x| -> f64 { perform_search!(x) })
+                .map(|x| -> f64 { minmax_factor * fitness_function(x) })
                 .collect()
         });
         let mut normalized_food_source_values = vec![0.0f64; self.employed_bees];
 
-        update_metadata!(
-            food_source_values,
-            employed_bees_searches,
-            employed_bees_searches.len()
+        // update_metadata!(
+        //     food_source_values,
+        //     employed_bees_searches,
+        //     employed_bees_searches.len()
+        // );
+
+        self.update_metadata(
+            &food_source_values,
+            &employed_bees_searches,
+            minmax_factor,
+            employed_bees_searches.len(),
         );
 
         //Create an intermediate vector to hold the searches made for onlooker bees
@@ -440,7 +427,7 @@ impl Optimizer {
             let new_search_vec: Vec<f64> = thread_pool.install(|| {
                 trial_search_points
                     .par_iter()
-                    .map(|x| perform_search!(x))
+                    .map(|x| minmax_factor * fitness_function(x))
                     .collect()
             });
             // println!("attempts_per_food_source before={:?}",attempts_per_food_source);
@@ -467,10 +454,13 @@ impl Optimizer {
             // println!("attempts_per_food_source={:?}",attempts_per_food_source);
             // println!("employed_bees_searches={:?}",employed_bees_searches);
             // println!("New Search Vec= {:?}", new_search_vec);
-            update_metadata!(
-                food_source_values,
-                employed_bees_searches,
-                self.employed_bees
+
+
+            self.update_metadata(
+                &food_source_values,
+                &employed_bees_searches,
+                minmax_factor,
+                self.employed_bees,
             );
 
             //calculate probability for onlooker bees
@@ -558,7 +548,7 @@ impl Optimizer {
             let new_search_vec: Vec<f64> = thread_pool.install(|| {
                 onlooker_trial_search_points
                     .par_iter()
-                    .map(|x| perform_search!(x))
+                    .map(|x| minmax_factor * fitness_function(x))
                     .collect()
             });
 
@@ -579,10 +569,11 @@ impl Optimizer {
                 };
             }
 
-            update_metadata!(
-                food_source_values,
-                employed_bees_searches,
-                self.onlooker_bees //number of searches performed
+            self.update_metadata(
+                &food_source_values,
+                &employed_bees_searches,
+                minmax_factor,
+                self.onlooker_bees,
             );
 
             //Send Scout Bee out
@@ -611,14 +602,15 @@ impl Optimizer {
                 let new_search_vec: Vec<f64> = thread_pool.install(|| {
                     trial_scout_bees_searches
                         .par_iter()
-                        .map(|x| perform_search!(x))
+                        .map(|x| minmax_factor * fitness_function(x))
                         .collect()
                 });
 
-                update_metadata!(
-                    food_source_values,
-                    employed_bees_searches,
-                    self.permanent_scout_bees
+                self.update_metadata(
+                    &food_source_values,
+                    &employed_bees_searches,
+                    minmax_factor,
+                    self.permanent_scout_bees,
                 );
 
                 //If replace with new value if search result is better. Started with f64::NEG_INFINITY
@@ -687,23 +679,24 @@ impl Optimizer {
                 let temporary_scout_food: Vec<f64> = thread_pool.install(|| {
                     temporary_scout_searches
                         .par_iter()
-                        .map(|x| perform_search!(x))
+                        .map(|x| minmax_factor * fitness_function(x))
                         .collect()
                 });
                 for idx in self.permanent_scout_bees..exceeded_max.len() {
                     //exceeded_max contains the INDEX values for food_source_values that need to be replaced.
                     food_source_values[exceeded_max[idx]] =
-                        temporary_scout_food[idx - self.permanent_scout_bees];  //Deduct by the offset caused by the permanent_scout_bees
-                    // println!(
-                    //     "Replacing with temporary_scout_food number {}",
-                    //     idx - self.permanent_scout_bees
-                    // );
+                        temporary_scout_food[idx - self.permanent_scout_bees]; //Deduct by the offset caused by the permanent_scout_bees
+                                                                               // println!(
+                                                                               //     "Replacing with temporary_scout_food number {}",
+                                                                               //     idx - self.permanent_scout_bees
+                                                                               // );
                 }
 
-                update_metadata!(
-                    food_source_values,
-                    employed_bees_searches,
-                    exceeded_max.len()
+                self.update_metadata(
+                    &food_source_values,
+                    &employed_bees_searches,
+                    minmax_factor,
+                    exceeded_max.len(),
                 );
             }
             exceeded_max.clear(); //Reset the counters for which dimensions have exceeded maximum here, as we have already dealt with them
@@ -756,7 +749,7 @@ mod search_algos {
         //problem_space_bounds = Optimizer::set_bounds(&problem_space_bounds, "[]");
 
         //create new instance of struct
-        let mut optimize_rana = Optimizer::new().minimize().set_thread_pool(62); //should strongly recommend user allow the system to decide for them
+        let mut optimize_rana = Optimizer::new().minimize().set_thread_pool(2); //should strongly recommend user allow the system to decide for them
 
         //set custom metadata. Should be fine even if it's commented out.
         optimize_rana.fitness_function_name = String::from("rana");
@@ -777,7 +770,7 @@ mod search_algos {
         //Run optimization function here.
         optimize_rana.classic_abc(
             &problem_space_bounds,
-            100u64,               //Max number of generations
+            1001u64,                //Max number of generations
             benchmark_algos::rana, //name of fitness function
         );
 
@@ -788,7 +781,7 @@ mod search_algos {
     }
 
     #[test]
-    fn test_classic_abc_all(){
+    fn test_classic_abc_all() {
         //#region
         //Set up problem space bounds
 
@@ -827,7 +820,7 @@ mod search_algos {
         //Run optimization function here.
         optimize_multiple.classic_abc(
             &problem_space_bounds,
-            100u64,               //Max number of generations
+            100u64,                //Max number of generations
             benchmark_algos::rana, //name of fitness function
         );
 
@@ -836,9 +829,6 @@ mod search_algos {
 
         println!("\n\nObject={:#?}\n\n", optimize_multiple);
     }
-
-
-    
 
     #[test]
     fn run_code() {
@@ -978,31 +968,6 @@ mod search_algos {
             &problem_space_bounds,
             100u64,                //Max iterations
             benchmark_algos::rana, //name of fitness function
-        )
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_ignore_nan() {
-        //Set up problem space bounds
-        let problem_space_bounds = vec![
-            [-512.0, 512.0],
-            [-512.0, 512.0],
-            [-512.0, 512.0],
-            [-512.0, 512.0],
-            [-512.0, 512.0],
-            [-512.0, 512.0],
-            [-512.0, 512.0],
-        ];
-
-        //create new instance of struct
-        let mut optimize_rana = Optimizer::new();
-
-        //Should panic
-        optimize_rana.classic_abc(
-            &problem_space_bounds,
-            100u64,                             //Max iterations
-            benchmark_algos::test_nan_function, //name of fitness function
         )
     }
 }
