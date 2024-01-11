@@ -305,8 +305,78 @@ impl Optimizer {
             }
         }
     }
-    
-    //Update food sources and revert trial positions
+
+    fn update_onlooker_bees(
+        self: &mut Self,
+        food_source_values: &mut Vec<f64>,
+        random_generator: &mut rand::rngs::ThreadRng, //random generator object
+        onlooker_chosen_dimension_vec: &mut Vec<usize>,
+        onlooker_trial_search_points: &mut Vec<Vec<f64>>,
+        employed_bees_searches: &mut Vec<Vec<f64>>,
+        onlooker_mapping_to_employed: &mut Vec<usize>,
+    ) {
+        //calculate probability for onlooker bees
+        //Normalize values (if there are negative values, add the (modulus of the smallest negative value) +1)
+        let abs_minimum_value = food_source_values
+            .iter()
+            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap()
+            .abs();
+
+        // let mut normalized_food_source_values = vec![0.0f64; self.employed_bees]; 
+        let mut normalized_food_source_values:Vec<f64> = food_source_values
+            .iter()
+            .map(|x| *x + abs_minimum_value + 1f64)
+            .collect();
+
+        let weighted_selection = WeightedIndex::new(&(*normalized_food_source_values)).unwrap();
+        //TODO: Make sure this is ALL  correct for ONLOOKER bees!!!!
+        //Set onlooker bees based on probability
+        for j in 0..self.onlooker_bees {
+            //For every single onlooker bee
+            //Select a random dimension
+            let dimension: usize = random_generator.gen_range(0..self.number_of_dimensions);
+            onlooker_chosen_dimension_vec[j] = dimension;
+
+            //Existing position in employed_bees_searches selected using fit_i/Epsilon_SN__j=1 fit_j
+            let selected_existing_position_idx = weighted_selection.sample(random_generator);
+
+            onlooker_trial_search_points[j] =
+                employed_bees_searches[selected_existing_position_idx].clone();
+            onlooker_mapping_to_employed[j] = selected_existing_position_idx; //make sure we know which belongs to which -- makes parallelism possible
+
+            //Select the index for an existing random food source
+            let mut random_solution_index: usize =
+                random_generator.gen_range(0..self.employed_bees);
+            while random_solution_index == selected_existing_position_idx {
+                random_solution_index = random_generator.gen_range(0..self.employed_bees)
+            }
+
+            // Modify initial positions by xij + phi_ij(xij − xkj)
+            let existing_sol = employed_bees_searches[selected_existing_position_idx][dimension];
+
+            //Modify
+            let tentative_new = existing_sol
+                + (random_generator.gen_range::<f64, _>(-1.0..1.0000000000000002)
+                    * (existing_sol - employed_bees_searches[random_solution_index][dimension]));
+
+            //Check if out of bounds, if they are out of bounds set them to those bounds (Karaboga et al)
+            let (lower_bound, upper_bound) = (
+                self.problem_space_bounds[dimension][0],
+                self.problem_space_bounds[dimension][1],
+            );
+
+            if tentative_new < lower_bound {
+                onlooker_trial_search_points[j][dimension] = lower_bound;
+            } else if tentative_new > upper_bound {
+                onlooker_trial_search_points[j][dimension] = upper_bound;
+            } else {
+                onlooker_trial_search_points[j][dimension] = tentative_new;
+            }
+        }
+    }
+
+    //Update food sources and revert trial positions for employed bees
     fn update_food_source_and_trials(
         self: &mut Self,
         new_search_vec: &Vec<f64>,                  //New food source values
@@ -335,7 +405,7 @@ impl Optimizer {
         }
     }
 
-    //update food sources alone
+    //update food sources alone for onlooker bees
     fn update_onlooker_food_source(
         self: &mut Self,
         new_search_vec: &Vec<f64>,                  //New food source values
@@ -365,14 +435,14 @@ impl Optimizer {
     //upate scout bees and other tracking variables in place without returning anything
     fn limit_exceeded_update_positions(
         self: &mut Self,
-        random_generator: &mut rand::rngs::ThreadRng,  //Generator object for generating random values
-        scout_food_sources_values: &mut Vec<f64>,       //Values for scout food sources
-        employed_bees_searches: &mut Vec<Vec<f64>>,     //Coordinates for employed bees searches.
-        temporary_scout_searches: &mut Vec<Vec<f64>>,   //Coordinates for temporary scout searches
-        exceeded_max: &mut Vec<usize>,                  //Vector of food sources which exceeded the iteration limit labelled by index
-        food_source_values: &mut Vec<f64>,              //Value of the food source/reward
-        scout_bees_searches: &mut Vec<Vec<f64>>,        //Coordinates of searches made by the permanently-assigned scout bees
-        adjusted_bounds: &Vec<[f64; 2]>,                //Problem space bounds (upper and lower limit inclusive)
+        random_generator: &mut rand::rngs::ThreadRng, //Generator object for generating random values
+        scout_food_sources_values: &mut Vec<f64>,     //Values for scout food sources
+        employed_bees_searches: &mut Vec<Vec<f64>>,   //Coordinates for employed bees searches.
+        temporary_scout_searches: &mut Vec<Vec<f64>>, //Coordinates for temporary scout searches
+        exceeded_max: &mut Vec<usize>, //Vector of food sources which exceeded the iteration limit labelled by index
+        food_source_values: &mut Vec<f64>, //Value of the food source/reward
+        scout_bees_searches: &mut Vec<Vec<f64>>, //Coordinates of searches made by the permanently-assigned scout bees
+        adjusted_bounds: &Vec<[f64; 2]>, //Problem space bounds (upper and lower limit inclusive)
     ) {
         //set food sources to existing permanent scout food sources
         let mut permanent_scout_bees_counter = self.permanent_scout_bees;
@@ -498,7 +568,6 @@ impl Optimizer {
                 .map(|x| -> f64 { minmax_factor * fitness_function(x) })
                 .collect()
         });
-        let mut normalized_food_source_values = vec![0.0f64; self.employed_bees];
 
         self.update_metadata(
             &food_source_values,
@@ -534,12 +603,6 @@ impl Optimizer {
         let mut onlooker_chosen_dimension_vec = vec![0usize; self.onlooker_bees];
         //Loop through the algorithm here
         for iteration in 0..self.max_generations {
-            //next: vij = xij + φij(xij − xkj), Modify initial positions and search again:
-            //employed_bees_searches=
-            //        attempts_per_food_source.iter().map(|x|{x+1});  //add 1 to the number of times we explore a food source
-            //xkj is an existing solution
-
-            //println!("\nBefore:\n{:?}", employed_bees_searches);
 
             //Update the employed bees positions in trial_search_points
             self.update_employed_bees(
@@ -557,8 +620,6 @@ impl Optimizer {
                     .map(|x| minmax_factor * fitness_function(x))
                     .collect()
             });
-            // println!("attempts_per_food_source before={:?}",attempts_per_food_source);
-            // println!("trial_search_points before= {:?}",trial_search_points);
 
             self.update_food_source_and_trials(
                 &new_search_vec,               //New food source values
@@ -569,29 +630,6 @@ impl Optimizer {
                 &chosen_dimension_vec,         //Vector of dimensions that were chosen per bee
             );
 
-            // //Update the food source and revert trial search point values
-            // for (idx, new_search) in new_search_vec.iter().enumerate() {
-            //     if *new_search > food_source_values[idx] {
-            //         // Update the employed bees searches to new points from trial_search_points if the new source has as higher fitness value
-            //         employed_bees_searches[idx][chosen_dimension_vec[idx]] =
-            //             trial_search_points[idx][chosen_dimension_vec[idx]];
-            //         //Update to new fitness value too
-            //         food_source_values[idx] = *new_search;
-            //         //If a better value of the food source was found, set the counter to 0 again
-            //         attempts_per_food_source[idx] = 0;
-            //     } else {
-            //         //Revert trial_search_points[i][chosen_dimension_vec[idx]] back to employed_bees_searches[i][chosen_dimension_vec[idx]]
-            //         //Important because we will have to check against this same value later.
-            //         trial_search_points[idx][chosen_dimension_vec[idx]] =
-            //             employed_bees_searches[idx][chosen_dimension_vec[idx]];
-            //     };
-            // }
-
-            // println!("trial_search_points after= {:?}",trial_search_points);
-            // println!("attempts_per_food_source={:?}",attempts_per_food_source);
-            // println!("employed_bees_searches={:?}",employed_bees_searches);
-            // println!("New Search Vec= {:?}", new_search_vec);
-
             self.update_metadata(
                 &food_source_values,
                 &employed_bees_searches,
@@ -599,68 +637,15 @@ impl Optimizer {
                 self.employed_bees,
             );
 
-            //calculate probability for onlooker bees
-            //Normalize values (if there are negative values, add the (modulus of the smallest negative value) +1)
-            let abs_minimum_value = food_source_values
-                .iter()
-                .min_by(|a, b| a.partial_cmp(b).unwrap())
-                .unwrap()
-                .abs();
+            self.update_onlooker_bees(
+                &mut food_source_values,
+                &mut random_generator,
+                &mut onlooker_chosen_dimension_vec,
+                &mut onlooker_trial_search_points,
+                &mut employed_bees_searches,
+                &mut onlooker_mapping_to_employed,
+            );
 
-            normalized_food_source_values = food_source_values
-                .iter()
-                .map(|x| *x + abs_minimum_value + 1f64)
-                .collect();
-
-            let weighted_selection = WeightedIndex::new(&normalized_food_source_values).unwrap();
-
-            //TODO: Make sure this is ALL  correct for ONLOOKER bees!!!!
-            //Set onlooker bees based on probability
-            for j in 0..self.onlooker_bees {
-                //For every single onlooker bee
-                //Select a random dimension
-                let dimension: usize = random_generator.gen_range(0..self.number_of_dimensions);
-                onlooker_chosen_dimension_vec[j] = dimension;
-
-                //Existing position in employed_bees_searches selected using fit_i/Epsilon_SN__j=1 fit_j
-                let selected_existing_position_idx =
-                    weighted_selection.sample(&mut random_generator);
-
-                onlooker_trial_search_points[j] =
-                    employed_bees_searches[selected_existing_position_idx].clone();
-                onlooker_mapping_to_employed[j] = selected_existing_position_idx; //make sure we know which belongs to which -- makes parallelism possible
-
-                //Select the index for an existing random food source
-                let mut random_solution_index: usize =
-                    random_generator.gen_range(0..self.employed_bees);
-                while random_solution_index == selected_existing_position_idx {
-                    random_solution_index = random_generator.gen_range(0..self.employed_bees)
-                }
-
-                // Modify initial positions by xij + phi_ij(xij − xkj)
-                let existing_sol =
-                    employed_bees_searches[selected_existing_position_idx][dimension];
-
-                //Modify
-                let tentative_new = existing_sol
-                    + (random_generator.gen_range::<f64, _>(-1.0..1.0000000000000002)
-                        * (existing_sol
-                            - employed_bees_searches[random_solution_index][dimension]));
-
-                //Check if out of bounds, if they are out of bounds set them to those bounds (Karaboga et al)
-                let (lower_bound, upper_bound) = (
-                    self.problem_space_bounds[dimension][0],
-                    self.problem_space_bounds[dimension][1],
-                );
-
-                if tentative_new < lower_bound {
-                    onlooker_trial_search_points[j][dimension] = lower_bound;
-                } else if tentative_new > upper_bound {
-                    onlooker_trial_search_points[j][dimension] = upper_bound;
-                } else {
-                    onlooker_trial_search_points[j][dimension] = tentative_new;
-                }
-            }
             //Run searches in parallel
             let new_search_vec: Vec<f64> = thread_pool.install(|| {
                 onlooker_trial_search_points
@@ -678,21 +663,6 @@ impl Optimizer {
                 &onlooker_chosen_dimension_vec, //Vector of dimensions that were chosen by onlooker bees
                 &onlooker_mapping_to_employed, //Vector of mappings for each onlooker bee to the employed bees' indices.
             );
-
-            // //Update the food source values
-            // for (idx, new_search) in new_search_vec.iter().enumerate() {
-            //     if *new_search > food_source_values[onlooker_mapping_to_employed[idx]] {
-            //         // Update to new points if the new source has as higher fitness value
-            //         employed_bees_searches[onlooker_mapping_to_employed[idx]]
-            //             [onlooker_chosen_dimension_vec[idx]] =
-            //             onlooker_trial_search_points[idx][onlooker_chosen_dimension_vec[idx]];
-            //         //Update to new fitness value too
-            //         food_source_values[onlooker_mapping_to_employed[idx]] = *new_search;
-            //         //If a better value of the food source was found, set the counter to 0 again
-            //         attempts_per_food_source[onlooker_mapping_to_employed[idx]] = 0;
-            //     }
-            //     //no need to do anything else here, as onlooker_trial_search_points[j] will be assigned afresh with each iteration
-            // }
 
             self.update_metadata(
                 &food_source_values,
@@ -767,6 +737,7 @@ impl Optimizer {
                         .map(|x| minmax_factor * fitness_function(x))
                         .collect()
                 });
+                
                 for idx in self.permanent_scout_bees..exceeded_max.len() {
                     //exceeded_max contains the INDEX values for food_source_values that need to be replaced.
                     food_source_values[exceeded_max[idx]] =
@@ -820,7 +791,7 @@ mod search_algos {
         //#region
         //Set up problem space bounds
 
-        let mut problem_space_bounds = vec![
+        let problem_space_bounds = vec![
             [-512.0, 512.0],
             [-512.0, 512.0],
             [-512.0, 512.0],
@@ -870,7 +841,7 @@ mod search_algos {
         //#region
         //Set up problem space bounds
 
-        let mut problem_space_bounds = vec![
+        let problem_space_bounds = vec![
             [-512.0, 512.0],
             [-512.0, 512.0],
             [-512.0, 512.0],
