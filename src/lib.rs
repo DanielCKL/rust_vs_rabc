@@ -1,4 +1,4 @@
-// TODO: Fine-tune the upper/lower bounds setting system.
+//TODO: Add ability to track minimum point with iterations
 //TODO: Include a non-parallel mode in case the API/interface being used cannot handle parallelism.
 //submodule for benchmark algorithms
 
@@ -42,9 +42,11 @@ pub struct Optimizer {
     pub algorithm_description: String,
 
     //Performance data to be written AFTER the algorithm has finished running.
-    pub searches_made: usize, //how many iterations have been run. Default of 0
+    pub searches_made: Vec<usize>, //how many searches have been performed. Default of 0
+    pub total_searches_made: usize, //Final number of searches made
     pub min_max_value: f64, //the minimum/maximum reward value found within problem space (single value). Default of 0.0
     pub min_max_point: Vec<f64>, //vector solution that will return min_max_value.
+
     pub real_time_taken: Duration, //Real time taken. Default of 0.0
 }
 
@@ -94,7 +96,7 @@ impl Optimizer {
         self.algorithm_description = String::from("");
 
         //Performance data to be written AFTER the algorithm has finished running.
-        self.searches_made = 0; //how many iterations have been run. Default of 0
+        //self.searches_made.push(0); //how many iterations have been run. Default of 0
         self.min_max_value = f64::NEG_INFINITY; //the minimum/maximum reward value found within problem space (single value). Default of 0.0
         self.min_max_point = vec![]; //vector solution that will return min_max_value.
         self
@@ -233,11 +235,19 @@ impl Optimizer {
 
         //Note: max_value was previously already multiplied by the minmax_factor
 
-        //Update number of searches made
-        self.searches_made += searches_performed as usize;
+        //Update vector holding number of searches
+        match self.searches_made.last() {
+            Some(&v) => {
+                self.searches_made.push( v + searches_performed);
+                self.total_searches_made = v + searches_performed;
+            }
+            None => {
+                self.searches_made.push(0usize);
+                self.total_searches_made = 0usize;
+            } //If the vector is blank, the initial number of searches made was 0
+        };
 
         //update metadata for max value and the vector that returns that value
-
         match (*max_value) > (minmax_factor * self.min_max_value) {
             true => {
                 self.min_max_value = minmax_factor * max_value;
@@ -323,8 +333,8 @@ impl Optimizer {
             .unwrap()
             .abs();
 
-        // let mut normalized_food_source_values = vec![0.0f64; self.employed_bees]; 
-        let mut normalized_food_source_values:Vec<f64> = food_source_values
+        // let mut normalized_food_source_values = vec![0.0f64; self.employed_bees];
+        let mut normalized_food_source_values: Vec<f64> = food_source_values
             .iter()
             .map(|x| *x + abs_minimum_value + 1f64)
             .collect();
@@ -442,7 +452,7 @@ impl Optimizer {
         exceeded_max: &mut Vec<usize>, //Vector of food sources which exceeded the iteration limit labelled by index
         food_source_values: &mut Vec<f64>, //Value of the food source/reward
         scout_bees_searches: &mut Vec<Vec<f64>>, //Coordinates of searches made by the permanently-assigned scout bees
-        adjusted_bounds: &Vec<[f64; 2]>, //Problem space bounds (upper and lower limit inclusive)
+                                                 // problem_space_bounds: &Vec<[f64; 2]>, //Problem space bounds (upper and lower limit inclusive)
     ) {
         //set food sources to existing permanent scout food sources
         let mut permanent_scout_bees_counter = self.permanent_scout_bees;
@@ -478,8 +488,9 @@ impl Optimizer {
             //Generate initial solutions -> randomly reach out with the employee turned scout bee
             for (idx, each_dimension) in employed_bees_searches[*i].iter_mut().enumerate() {
                 //for every single dimension, generate random values within problem space bounds.
-                *each_dimension = random_generator
-                    .gen_range::<f64, _>(adjusted_bounds[idx][0]..adjusted_bounds[idx][1])
+                *each_dimension = random_generator.gen_range::<f64, _>(
+                    self.problem_space_bounds[idx][0]..self.problem_space_bounds[idx][1],
+                )
             }
 
             temporary_scout_searches.push(employed_bees_searches[*i].clone());
@@ -494,9 +505,6 @@ impl Optimizer {
         max_generations: u64,
         fitness_function: fn(&Vec<f64>) -> f64,
     ) {
-        //create an optimizer object first with all the default fields and metadata initialized.
-        // let mut instance =
-        //     Optimizer::default_initializer(problem_space_bounds, max_generations);//, other_args);
         //Start timer here
         let function_real_time = Instant::now();
 
@@ -509,6 +517,8 @@ impl Optimizer {
                 self.thread_pool_size
             )
         }
+
+        //set up thread pool
         let thread_pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.thread_pool_size)
             .build()
@@ -516,11 +526,6 @@ impl Optimizer {
 
         //Set metadata for this function.
         self.problem_space_bounds = problem_space_bounds.to_vec();
-        let adjusted_bounds = Optimizer::set_bounds(
-            &self.problem_space_bounds,
-            &self.problem_space_bounds_inclusivity,
-        );
-
         self.number_of_dimensions = self.problem_space_bounds.len() as usize;
         self.max_generations = max_generations;
         self.algorithm_name = String::from("classic_abc");
@@ -551,8 +556,9 @@ impl Optimizer {
         for each_search_point in employed_bees_searches.iter_mut() {
             for (idx, dimension) in each_search_point.iter_mut().enumerate() {
                 //for every single dimension
-                *dimension = random_generator
-                    .gen_range::<f64, _>(adjusted_bounds[idx][0]..adjusted_bounds[idx][1])
+                *dimension = random_generator.gen_range::<f64, _>(
+                    self.problem_space_bounds[idx][0]..self.problem_space_bounds[idx][1],
+                )
                 //generate random values within problem space bounds.
             }
         }
@@ -603,7 +609,6 @@ impl Optimizer {
         let mut onlooker_chosen_dimension_vec = vec![0usize; self.onlooker_bees];
         //Loop through the algorithm here
         for iteration in 0..self.max_generations {
-
             //Update the employed bees positions in trial_search_points
             self.update_employed_bees(
                 &mut random_generator,
@@ -613,7 +618,7 @@ impl Optimizer {
                 &mut employed_bees_searches,
             );
 
-            //Run the searches in parallel on the trial search points
+            //Run the searches in parallel on the trial search points for employed bees
             let new_search_vec: Vec<f64> = thread_pool.install(|| {
                 trial_search_points
                     .par_iter()
@@ -634,7 +639,7 @@ impl Optimizer {
                 &food_source_values,
                 &employed_bees_searches,
                 minmax_factor,
-                self.employed_bees,
+                self.employed_bees, //Here, we are sure that the number of searches= number of employed bees
             );
 
             self.update_onlooker_bees(
@@ -679,8 +684,9 @@ impl Optimizer {
                     for (idx, each_dimension) in trial_scout_bees_searches[k].iter_mut().enumerate()
                     {
                         //for every single dimension
-                        *each_dimension = random_generator
-                            .gen_range::<f64, _>(adjusted_bounds[idx][0]..adjusted_bounds[idx][1])
+                        *each_dimension = random_generator.gen_range::<f64, _>(
+                            self.problem_space_bounds[idx][0]..self.problem_space_bounds[idx][1],
+                        )
                         //generate random values within problem space bounds.
                     }
                 }
@@ -727,7 +733,7 @@ impl Optimizer {
                     &mut exceeded_max,
                     &mut food_source_values,
                     &mut scout_bees_searches,
-                    &adjusted_bounds,
+                    //&self.problem_space_bounds,
                 );
 
                 //To be run only if the number of food sources that exceeded their max limit is greater than the number of permanent scout bees on duty
@@ -737,7 +743,7 @@ impl Optimizer {
                         .map(|x| minmax_factor * fitness_function(x))
                         .collect()
                 });
-                
+
                 for idx in self.permanent_scout_bees..exceeded_max.len() {
                     //exceeded_max contains the INDEX values for food_source_values that need to be replaced.
                     food_source_values[exceeded_max[idx]] =
@@ -757,8 +763,6 @@ impl Optimizer {
             }
             exceeded_max.clear(); //Reset the counters for which dimensions have exceeded maximum here, as we have already dealt with them
             temporary_scout_searches.clear() //reset the vector that holds the temporary scout searches
-
-            //TODO: Reapply the negative sign if you went for minimization instead of maximization
         }
 
         self.real_time_taken = function_real_time.elapsed();
@@ -833,7 +837,19 @@ mod search_algos {
         println!("\nTime taken ={:?}\n", optimize_rana.real_time_taken);
         //println!("Time taken in seconds ={}",optimize_rana.real_time_taken.as_secs());
 
-        println!("\n\nObject={:#?}\n\n", optimize_rana);
+        //println!("\n\nObject={:?}\n\n", optimize_rana);
+        println!(
+            "Number of records for searches made = {:#?}",
+            optimize_rana.searches_made.len()
+        );
+
+        println!("\nChecking the validity of metadata...");
+        assert_eq!(
+            *optimize_rana.searches_made.last().unwrap(),
+            optimize_rana.total_searches_made
+        );
+
+        println!("All checks run.");
     }
 
     #[test]
