@@ -42,7 +42,7 @@ pub struct Optimizer {
     pub algorithm_description: String,
 
     //Performance data to be written AFTER the algorithm has finished running.
-    pub searches_made: Vec<usize>, //how many searches have been performed. Default of 0
+    pub searches_made_history: Vec<usize>, //how many searches have been performed. Default of 0
     pub total_searches_made: usize, //Final number of searches made
     pub min_max_value: f64, //the minimum/maximum reward value found within problem space (single value). Default of 0.0
     pub min_max_point: Vec<f64>, //vector solution that will return min_max_value.
@@ -96,7 +96,7 @@ impl Optimizer {
         self.algorithm_description = String::from("");
 
         //Performance data to be written AFTER the algorithm has finished running.
-        //self.searches_made.push(0); //how many iterations have been run. Default of 0
+        //self.searches_made_history.push(0); //how many iterations have been run. Default of 0
         self.min_max_value = f64::NEG_INFINITY; //the minimum/maximum reward value found within problem space (single value). Default of 0.0
         self.min_max_point = vec![]; //vector solution that will return min_max_value.
         self
@@ -236,13 +236,13 @@ impl Optimizer {
         //Note: max_value was previously already multiplied by the minmax_factor
 
         //Update vector holding number of searches
-        match self.searches_made.last() {
+        match self.searches_made_history.last() {
             Some(&v) => {
-                self.searches_made.push( v + searches_performed);
+                self.searches_made_history.push( v + searches_performed);
                 self.total_searches_made = v + searches_performed;
             }
             None => {
-                self.searches_made.push(0usize);
+                self.searches_made_history.push(0usize);
                 self.total_searches_made = 0usize;
             } //If the vector is blank, the initial number of searches made was 0
         };
@@ -840,12 +840,12 @@ mod search_algos {
         //println!("\n\nObject={:?}\n\n", optimize_rana);
         println!(
             "Number of records for searches made = {:#?}",
-            optimize_rana.searches_made.len()
+            optimize_rana.searches_made_history.len()
         );
 
         println!("\nChecking the validity of metadata...");
         assert_eq!(
-            *optimize_rana.searches_made.last().unwrap(),
+            *optimize_rana.searches_made_history.last().unwrap(),
             optimize_rana.total_searches_made
         );
 
