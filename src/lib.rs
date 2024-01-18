@@ -1,14 +1,14 @@
-//TODO: Add ability to track minimum point with iterations
-//TODO: Include a non-parallel mode in case the API/interface being used cannot handle parallelism.
-//submodule for benchmark algorithms
-
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(non_snake_case)]
 
 mod benchmark_algos;
+use plotters::prelude::*;
 use rand::{distributions::Distribution, distributions::WeightedIndex, Rng};
 use rayon::prelude::*;
+use std::env::current_dir;
+use std::fs;
+
 //use std::thread;
 use std::thread::available_parallelism;
 use std::time::{Duration, Instant};
@@ -27,6 +27,7 @@ pub struct Optimizer {
     pub local_limit: usize, //Limit for how many times a food source can be exploited before being abandoned.
     pub problem_space_bounds_inclusivity: String,
     thread_pool_size: usize, //size of the thread pool
+    parallel_mode: bool,
 
     //Problem Space metadata
     //Calculated from length of problem_space_bounds.
@@ -41,11 +42,17 @@ pub struct Optimizer {
     pub algorithm_name: String, //Name of the algorithm being used
     pub algorithm_description: String,
 
-    //Performance data to be written AFTER the algorithm has finished running.
-    pub searches_made_history: Vec<usize>, //how many searches have been performed. Default of 0
-    pub total_searches_made: usize, //Final number of searches made
+    //Performance data
+    pub searches_made_history: Vec<usize>, //Track record/history of many searches have been performed. Default of 0
+    pub total_searches_made: usize,        //Final number of searches made
+
+    pub min_max_value_history: Vec<f64>,
     pub min_max_value: f64, //the minimum/maximum reward value found within problem space (single value). Default of 0.0
+
+    pub min_max_point_history: Vec<Vec<f64>>,
     pub min_max_point: Vec<f64>, //vector solution that will return min_max_value.
+
+    pub iter_to_min_max: usize, //Number of iterations that were taken to reach the minimum value.
 
     pub real_time_taken: Duration, //Real time taken. Default of 0.0
 }
@@ -70,6 +77,7 @@ impl Optimizer {
         Self {
             employed_bees: 62usize, //Default values for employed, onlooker, and scout bees as recommended in the source paper.
             onlooker_bees: 62usize,
+            parallel_mode: true, //default to parallel mode.
             permanent_scout_bees: 1usize,
             local_limit: 220usize, //550usize seems to be the most optimal
             maximize: true,        //default to finding maximum value in input problem space
@@ -109,6 +117,11 @@ impl Optimizer {
         self
     }
 
+    pub fn not_parallel(mut self: Self) -> Self {
+        self.parallel_mode = false;
+        self
+    }
+
     //should strongly recommend user allow the system to decide for them
     pub fn set_thread_pool(mut self: Self, new_thread_pool_size: usize) -> Self {
         self.thread_pool_size = new_thread_pool_size;
@@ -144,55 +157,55 @@ impl Optimizer {
         f64::from_bits(next_bits)
     }
 
-    // vec1 + vec2
-    fn add_elementwise(vec1: &Vec<f64>, vec2: &Vec<f64>) -> Vec<f64> {
-        let result: Vec<f64> = vec1.iter().zip(vec2.iter()).map(|(a, b)| a + b).collect();
-        println!("{:?}", result);
-        result
-    }
+    // // vec1 + vec2
+    // fn add_elementwise(vec1: &Vec<f64>, vec2: &Vec<f64>) -> Vec<f64> {
+    //     let result: Vec<f64> = vec1.iter().zip(vec2.iter()).map(|(a, b)| a + b).collect();
+    //     println!("{:?}", result);
+    //     result
+    // }
 
-    // vec1 - vec2
-    fn deduct_elementwise(vec1: &Vec<f64>, vec2: &Vec<f64>) -> Vec<f64> {
-        let result: Vec<f64> = vec1.iter().zip(vec2.iter()).map(|(a, b)| a - b).collect();
-        println!("{:?}", result);
-        result
-    }
+    // // vec1 - vec2
+    // fn deduct_elementwise(vec1: &Vec<f64>, vec2: &Vec<f64>) -> Vec<f64> {
+    //     let result: Vec<f64> = vec1.iter().zip(vec2.iter()).map(|(a, b)| a - b).collect();
+    //     println!("{:?}", result);
+    //     result
+    // }
 
-    // vec1 * vec2
-    fn multiply_elementwise(vec1: &Vec<f64>, vec2: &Vec<f64>) -> Vec<f64> {
-        let result: Vec<f64> = vec1.iter().zip(vec2.iter()).map(|(a, b)| a * b).collect();
-        println!("{:?}", result);
-        result
-    }
+    // // vec1 * vec2
+    // fn multiply_elementwise(vec1: &Vec<f64>, vec2: &Vec<f64>) -> Vec<f64> {
+    //     let result: Vec<f64> = vec1.iter().zip(vec2.iter()).map(|(a, b)| a * b).collect();
+    //     println!("{:?}", result);
+    //     result
+    // }
 
     //set bounds for input to allow them to comply with the default .. data inside.
-    pub fn set_bounds(input: &Vec<[f64; 2]>, mode: &str) -> Vec<[f64; 2]> {
-        if mode == "(]" {
-            //(lb,ub]  =>Lower bound exclusive, upper bound inclusive =>Setting = "(]"
-            input
-                .to_vec()
-                .iter()
-                .map(|x| [Self::next_up(x[0]), Self::next_up(x[1])])
-                .collect()
-        } else if mode == "()" {
-            //(lb,ub) => Lower bound exclusive, upper bound exclusive =>Setting = "()"
-            input
-                .to_vec()
-                .iter()
-                .map(|x| [Self::next_up(x[0]), x[1]])
-                .collect()
-        } else if mode == "[)" {
-            //[lb,ub) =>Lower bound inclusive, upper bound exclusive =>Setting = "[)"
-            input.to_vec()
-        } else {
-            //[lb, ub] => Default: Lower bound inclusive, upper bound inclusive =>Setting = "[]"
-            input
-                .to_vec()
-                .iter()
-                .map(|x| [(x[0]), Self::next_up(x[1])])
-                .collect()
-        }
-    }
+    // pub fn set_bounds(input: &Vec<[f64; 2]>, mode: &str) -> Vec<[f64; 2]> {
+    //     if mode == "(]" {
+    //         //(lb,ub]  =>Lower bound exclusive, upper bound inclusive =>Setting = "(]"
+    //         input
+    //             .to_vec()
+    //             .iter()
+    //             .map(|x| [Self::next_up(x[0]), Self::next_up(x[1])])
+    //             .collect()
+    //     } else if mode == "()" {
+    //         //(lb,ub) => Lower bound exclusive, upper bound exclusive =>Setting = "()"
+    //         input
+    //             .to_vec()
+    //             .iter()
+    //             .map(|x| [Self::next_up(x[0]), x[1]])
+    //             .collect()
+    //     } else if mode == "[)" {
+    //         //[lb,ub) =>Lower bound inclusive, upper bound exclusive =>Setting = "[)"
+    //         input.to_vec()
+    //     } else {
+    //         //[lb, ub] => Default: Lower bound inclusive, upper bound inclusive =>Setting = "[]"
+    //         input
+    //             .to_vec()
+    //             .iter()
+    //             .map(|x| [(x[0]), Self::next_up(x[1])])
+    //             .collect()
+    //     }
+    // }
 
     //Taken from https://doc.rust-lang.org/src/core/num/f64.rs.html#740
     fn next_down(val: f64) -> f64 {
@@ -223,8 +236,7 @@ impl Optimizer {
         input_vector: &Vec<Vec<f64>>, //vector of coordinates matching vec_fitness_value
         minmax_factor: f64,           //minmax factor value
         searches_performed: usize,    //key in searches performed here
-    ) -> Result<String, String> //0 for ok, 1 for error
-    {
+    ) -> Option<String> {
         //perform all other actions here
         //Get maximum value and coordinates of fitness value
         let (max_index, max_value) = vec_fitness_value
@@ -235,15 +247,15 @@ impl Optimizer {
 
         //Note: max_value was previously already multiplied by the minmax_factor
 
-        //Update vector holding number of searches
+        //Update maximumn searches and vector holding number of searches
         match self.searches_made_history.last() {
             Some(&v) => {
-                self.searches_made_history.push( v + searches_performed);
+                self.searches_made_history.push(v + searches_performed);
                 self.total_searches_made = v + searches_performed;
             }
             None => {
-                self.searches_made_history.push(0usize);
-                self.total_searches_made = 0usize;
+                self.searches_made_history.push(searches_performed);
+                self.total_searches_made = searches_performed;
             } //If the vector is blank, the initial number of searches made was 0
         };
 
@@ -252,14 +264,45 @@ impl Optimizer {
             true => {
                 self.min_max_value = minmax_factor * max_value;
                 self.min_max_point = input_vector[max_index].clone();
-
-                Ok(format!(
+                self.min_max_value_history.push(self.min_max_value);
+                self.min_max_point_history.push(self.min_max_point.clone());
+                Some(format!(
                     "Max value updated to {} at {:?}",
                     self.min_max_value, self.min_max_point
                 ))
             }
-            _ => Ok(format!("No changes made.")),
+            false => {
+                //Write to history with the same value
+                self.min_max_value_history.push(self.min_max_value);
+                self.min_max_point_history.push(self.min_max_point.clone());
+                Some(format!("No changes made."))
+            }
         }
+    }
+
+    //Perform post-processing of metadata after the algorithm has finished running.
+    fn post_process_metadata(self: &mut Self) -> Option<String> {
+        let first_minmax_idx = self
+            .min_max_value_history
+            .iter()
+            .position(|x| *x == self.min_max_value)
+            .unwrap();
+
+        //Update the number of iterations taken to min/max the value of self.min_max_value
+        self.iter_to_min_max = self.searches_made_history[first_minmax_idx];
+
+        match self.maximize {
+            true => println!(
+                "Number of iterations that it took to get maximum value of {} is {}",
+                self.min_max_value, self.iter_to_min_max
+            ),
+            false => println!(
+                "Number of iterations that it took to get minimum value of {} is {}",
+                self.min_max_value, self.iter_to_min_max
+            ),
+        };
+
+        Some(String::from("Test"))
     }
 
     //update employed bees and other tracking variables in place without returning anything else.
@@ -334,13 +377,12 @@ impl Optimizer {
             .abs();
 
         // let mut normalized_food_source_values = vec![0.0f64; self.employed_bees];
-        let mut normalized_food_source_values: Vec<f64> = food_source_values
+        let normalized_food_source_values: Vec<f64> = food_source_values
             .iter()
             .map(|x| *x + abs_minimum_value + 1f64)
             .collect();
 
         let weighted_selection = WeightedIndex::new(&(*normalized_food_source_values)).unwrap();
-        //TODO: Make sure this is ALL  correct for ONLOOKER bees!!!!
         //Set onlooker bees based on probability
         for j in 0..self.onlooker_bees {
             //For every single onlooker bee
@@ -499,7 +541,17 @@ impl Optimizer {
         }
     }
 
-    pub fn classic_abc(
+    //update reinforcement vector. Should perform the updating in place.
+    fn update_reinforcement_vector(
+        initial_reinforcement_vector: Vec<f64>,
+        food_source_values: Vec<f64>,
+        chosen_dimension_vector: Vec<usize>, //Vector of dimensions that were chosen to be explored
+    ) {
+    }
+
+    //Karaboga's classic ABC
+    //Defaults to parallel. To make it non-parallel, use Optimizer.not_parallel
+    pub fn abc(
         self: &mut Self,
         problem_space_bounds: &Vec<[f64; 2]>,
         max_generations: u64,
@@ -508,14 +560,17 @@ impl Optimizer {
         //Start timer here
         let function_real_time = Instant::now();
 
-        //Set the thread pool size based on available threads.
-        if self.thread_pool_size == 1 {
-            println!("Running with {} threads. To change, use the builder method set_thread_pool(desired_pool_size). For example: NewOptimizer::new().set_thread_pool(7)",self.thread_pool_size);
-        } else {
-            println!(
-                "Running in parallel with {} threads.",
-                self.thread_pool_size
-            )
+        //Set thread pool size based on available threads IF parallel mode is on.
+        match self.parallel_mode{
+        //If parallel mode is on, set thread pool size
+        true =>
+        match self.thread_pool_size {
+            1 => println!("Running with {} threads. To change, use the builder method set_thread_pool(desired_pool_size). 
+            For example: NewOptimizer::new().set_thread_pool(7)",self.thread_pool_size), 
+            _=>println!("Running in parallel with {} threads.",self.thread_pool_size)
+        },
+        //Otherwise continue without doing anything else.
+        false=> println!("Parallel mode set to off. Running sequentially and with no parallel operations")      
         }
 
         //set up thread pool
@@ -528,7 +583,7 @@ impl Optimizer {
         self.problem_space_bounds = problem_space_bounds.to_vec();
         self.number_of_dimensions = self.problem_space_bounds.len() as usize;
         self.max_generations = max_generations;
-        self.algorithm_name = String::from("classic_abc");
+        self.algorithm_name = String::from("abc");
         self.algorithm_description=String::from("Karaboga's classic ABC from https://www.researchgate.net/publication/221498082_Artificial_Bee_Colony_ABC_Optimization_Algorithm_for_Solving_Constrained_Optimization_Problems");
 
         //Ensure that the metadata set does not have an unacceptable value.
@@ -552,7 +607,6 @@ impl Optimizer {
             vec![vec![0.0f64; self.number_of_dimensions]; self.employed_bees];
 
         //Generate intial solutions
-        //TODO: Possibly make this parallel as well.
         for each_search_point in employed_bees_searches.iter_mut() {
             for (idx, dimension) in each_search_point.iter_mut().enumerate() {
                 //for every single dimension
@@ -568,12 +622,19 @@ impl Optimizer {
         //vec![vec![0.0f64; self.number_of_dimensions]; self.employed_bees]; //Create an intermediate copy of the searches already made.
 
         //Perform initial search with employed bees on every single point
-        let mut food_source_values: Vec<f64> = thread_pool.install(|| {
-            employed_bees_searches
-                .par_iter()
+        let mut food_source_values: Vec<f64> = match self.parallel_mode {
+            //run in parallel
+            true => thread_pool.install(|| {
+                employed_bees_searches
+                    .par_iter()
+                    .map(|x| -> f64 { minmax_factor * fitness_function(x) })
+                    .collect()
+            }),
+            false => employed_bees_searches
+                .iter()
                 .map(|x| -> f64 { minmax_factor * fitness_function(x) })
-                .collect()
-        });
+                .collect(),
+        };
 
         self.update_metadata(
             &food_source_values,
@@ -618,13 +679,20 @@ impl Optimizer {
                 &mut employed_bees_searches,
             );
 
-            //Run the searches in parallel on the trial search points for employed bees
-            let new_search_vec: Vec<f64> = thread_pool.install(|| {
-                trial_search_points
-                    .par_iter()
+            let new_search_vec: Vec<f64> = match self.parallel_mode {
+                //Run the searches in parallel on the trial search points for employed bees
+                true => thread_pool.install(|| {
+                    trial_search_points
+                        .par_iter()
+                        .map(|x| minmax_factor * fitness_function(x))
+                        .collect()
+                }),
+                //Run searches sequentially
+                false => trial_search_points
+                    .iter()
                     .map(|x| minmax_factor * fitness_function(x))
-                    .collect()
-            });
+                    .collect(),
+            };
 
             self.update_food_source_and_trials(
                 &new_search_vec,               //New food source values
@@ -651,13 +719,20 @@ impl Optimizer {
                 &mut onlooker_mapping_to_employed,
             );
 
-            //Run searches in parallel
-            let new_search_vec: Vec<f64> = thread_pool.install(|| {
-                onlooker_trial_search_points
-                    .par_iter()
+            //Run searches
+            let new_search_vec = match self.parallel_mode {
+                //Run searches in parallel
+                true => thread_pool.install(|| {
+                    onlooker_trial_search_points
+                        .par_iter()
+                        .map(|x| minmax_factor * fitness_function(x))
+                        .collect()
+                }),
+                false => onlooker_trial_search_points
+                    .iter()
                     .map(|x| minmax_factor * fitness_function(x))
-                    .collect()
-            });
+                    .collect(),
+            };
 
             self.update_onlooker_food_source(
                 &new_search_vec,                //New food source values
@@ -691,13 +766,21 @@ impl Optimizer {
                     }
                 }
 
-                //Perform search
-                let new_search_vec: Vec<f64> = thread_pool.install(|| {
-                    trial_scout_bees_searches
-                        .par_iter()
+                //Run searches
+                let new_search_vec: Vec<f64> = match self.parallel_mode {
+                    //Perform search in parallel
+                    true => thread_pool.install(|| {
+                        trial_scout_bees_searches
+                            .par_iter()
+                            .map(|x| minmax_factor * fitness_function(x))
+                            .collect()
+                    }),
+                    //perform search sequentially
+                    false => trial_scout_bees_searches
+                        .iter()
                         .map(|x| minmax_factor * fitness_function(x))
-                        .collect()
-                });
+                        .collect(),
+                };
 
                 self.update_metadata(
                     &food_source_values,
@@ -737,12 +820,19 @@ impl Optimizer {
                 );
 
                 //To be run only if the number of food sources that exceeded their max limit is greater than the number of permanent scout bees on duty
-                let temporary_scout_food: Vec<f64> = thread_pool.install(|| {
-                    temporary_scout_searches
-                        .par_iter()
+                let temporary_scout_food: Vec<f64> = match self.parallel_mode {
+                    //run in parallel
+                    true => thread_pool.install(|| {
+                        temporary_scout_searches
+                            .par_iter()
+                            .map(|x| minmax_factor * fitness_function(x))
+                            .collect()
+                    }),
+                    false => temporary_scout_searches
+                        .iter()
                         .map(|x| minmax_factor * fitness_function(x))
-                        .collect()
-                });
+                        .collect(),
+                };
 
                 for idx in self.permanent_scout_bees..exceeded_max.len() {
                     //exceeded_max contains the INDEX values for food_source_values that need to be replaced.
@@ -764,8 +854,18 @@ impl Optimizer {
             exceeded_max.clear(); //Reset the counters for which dimensions have exceeded maximum here, as we have already dealt with them
             temporary_scout_searches.clear() //reset the vector that holds the temporary scout searches
         }
+        self.post_process_metadata();
 
         self.real_time_taken = function_real_time.elapsed();
+    }
+
+    //Reinforcement learning ABC
+    pub fn rabc(
+        self: &mut Self,
+        problem_space_bounds: &Vec<[f64; 2]>,
+        max_generations: u64,
+        fitness_function: fn(&Vec<f64>) -> f64,
+    ) {
     }
 
     //Reinforcement learning ABC from https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0200738
@@ -775,6 +875,82 @@ impl Optimizer {
     pub fn vs_rabc() {}
 
     pub fn get_results() {}
+
+    //plot of x vs y - Both must be vectors of f64
+    pub fn plot(x: Vec<f64>, y: Vec<f64>) {
+        //println!("{:?}",current_dir().unwrap().as_path());
+        let mut mypath = current_dir().unwrap();
+        mypath.push("results");
+        //println!("cwd={:?}",mypath);
+        fs::create_dir_all(mypath.as_path()).expect("Failed to create path.");
+
+        let mut data: Vec<(f64, f64)> = Vec::new();
+        for (idx, val) in x.iter().enumerate() {
+            data.push((*val, y[idx]));
+        }
+
+        //println!("{:?}",data);
+        //let data2 = [(1.0, 3.2), (2., 2.2), (3., 1.4), (4., 1.4), (5., 5.5)];
+
+        //Get bounds for graph
+        //x-axis
+        let xmax = *x.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+        let xmin = *x.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+
+        let ymax = *y.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+        let ymin = *y.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+        println!("{}", xmax);
+
+        println!("Position={:?}", y.iter().position(|y| *y == ymin).unwrap());
+
+        let first_minimum = y.iter().position(|y| *y == ymin).unwrap();
+
+        println!("First value for ymin is {}", y[first_minimum]); //Find position of FIRST element that is the minimum
+        println!(
+            "Number of iterations that it took to get minimum value is {}",
+            x[first_minimum]
+        );
+
+        println!("{}", xmin);
+        println!("{}", ymax);
+        println!("{}", ymin);
+        //y-axis
+
+        let drawing_area =
+            SVGBackend::new("results/configure_series_labels.svg", (1200, 800)).into_drawing_area();
+
+        drawing_area.fill(&WHITE).unwrap();
+        let mut chart_builder = ChartBuilder::on(&drawing_area);
+        chart_builder
+            .margin(7)
+            .set_left_and_bottom_label_area_size(50);
+        let mut chart_context = chart_builder
+            .build_cartesian_2d(
+                xmin..(xmax + (0.1 * xmax).abs()) as f64,
+                (ymin - (0.1 * ymin).abs())..(ymax + (0.1 * ymax).abs()),
+            )
+            .unwrap();
+        chart_context.configure_mesh().draw().unwrap();
+
+        chart_context
+            .draw_series(LineSeries::new(data, RED))
+            .unwrap()
+            .label("Classic ABC")
+            .legend(|(x, y)| Rectangle::new([(x - 15, y + 1), (x, y)], RED));
+        // chart_context.draw_series(LineSeries::new(data2, RED)).unwrap().label("Series 2")
+        //     .legend(|(x,y)| Rectangle::new([(x - 15, y + 1), (x, y)], RED));
+
+        chart_context
+            .configure_series_labels()
+            .position(SeriesLabelPosition::UpperRight)
+            .margin(15)
+            .legend_area_size(3)
+            .border_style(BLUE)
+            .background_style(BLUE.mix(0.1))
+            .label_font(("Calibri", 12))
+            .draw()
+            .unwrap();
+    }
 }
 
 //verify values of each dimension to make sure they are within bounds
@@ -791,7 +967,153 @@ mod search_algos {
 
     use super::*;
     #[test]
-    fn test_classic_abc() {
+    fn test_abc() {
+        //#region
+        //Set up problem space bounds
+        let problem_space_bounds = vec![
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+        ];
+
+        //Lower and upper bound inclusive
+        //problem_space_bounds = Optimizer::set_bounds(&problem_space_bounds, "[]");
+
+        //create new instance of struct
+        let mut optimize_rana = Optimizer::new().minimize().set_thread_pool(2); //should strongly recommend user allow the system to decide for them
+
+        //set custom metadata. Should be fine even if it's commented out.
+        optimize_rana.fitness_function_name = String::from("rana");
+        optimize_rana.fitness_function_description=String::from("N-dimensional, multimodal. Range = [-512,512] for all dimensions. minimum point for 2D: `[-488.632577, 512]`  Minimum value for 2D=-511.7328819,  Minimum point for 7D: `[-512, -512, -512, -512, -512, -512, -511.995602]` minimum value for 7D=-3070.2475210");
+        optimize_rana.known_minimum_value = Some(-3070.2475210);
+        optimize_rana.permanent_scout_bees = 2usize;
+        optimize_rana.known_minimum_point = Some(vec![
+            -512.0,
+            -512.0,
+            -512.0,
+            -512.0,
+            -512.0,
+            -512.0,
+            -511.995602,
+        ]);
+
+        //#endregion
+        //Run optimization function here.
+        optimize_rana.abc(
+            &problem_space_bounds,
+            5u64,                  //Max number of generations
+            benchmark_algos::rana, //name of fitness function
+        );
+
+        println!("\nTime taken ={:?}\n", optimize_rana.real_time_taken);
+        //println!("Time taken in seconds ={}",optimize_rana.real_time_taken.as_secs());
+
+        //println!("\n\nObject={:#?}\n\n", optimize_rana);
+        println!(
+            "Number of records for searches made = {:#?}",
+            optimize_rana.searches_made_history.len()
+        );
+
+        println!("\nChecking the validity of metadata...");
+        assert_eq!(
+            *optimize_rana.searches_made_history.last().unwrap(),
+            optimize_rana.total_searches_made
+        );
+
+        assert_eq!(
+            optimize_rana.searches_made_history.len(),
+            optimize_rana.min_max_value_history.len()
+        );
+        assert_eq!(
+            optimize_rana.searches_made_history.len(),
+            optimize_rana.min_max_point_history.len()
+        );
+        assert_eq!(optimize_rana.searches_made_history.len() > 0, true);
+
+        println!("All checks run.");
+    }
+
+    #[test]
+    fn test_abc_nonparallel() {
+        //#region
+        //Set up problem space bounds
+        let problem_space_bounds = vec![
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+            [-512.0, 512.0],
+        ];
+
+        //Lower and upper bound inclusive
+        //problem_space_bounds = Optimizer::set_bounds(&problem_space_bounds, "[]");
+
+        //create new instance of struct
+        let mut optimize_rana = Optimizer::new()
+            .minimize()
+            .set_thread_pool(2)
+            .not_parallel(); //should strongly recommend user allow the system to decide for them
+
+        //set custom metadata. Should be fine even if it's commented out.
+        optimize_rana.fitness_function_name = String::from("rana");
+        optimize_rana.fitness_function_description=String::from("N-dimensional, multimodal. Range = [-512,512] for all dimensions. minimum point for 2D: `[-488.632577, 512]`  Minimum value for 2D=-511.7328819,  Minimum point for 7D: `[-512, -512, -512, -512, -512, -512, -511.995602]` minimum value for 7D=-3070.2475210");
+        optimize_rana.known_minimum_value = Some(-3070.2475210);
+        optimize_rana.permanent_scout_bees = 2usize;
+        optimize_rana.known_minimum_point = Some(vec![
+            -512.0,
+            -512.0,
+            -512.0,
+            -512.0,
+            -512.0,
+            -512.0,
+            -511.995602,
+        ]);
+
+        //#endregion
+        //Run optimization function here.
+        optimize_rana.abc(
+            &problem_space_bounds,
+            5u64,                  //Max number of generations
+            benchmark_algos::rana, //name of fitness function
+        );
+
+        println!("\nTime taken ={:?}\n", optimize_rana.real_time_taken);
+        //println!("Time taken in seconds ={}",optimize_rana.real_time_taken.as_secs());
+
+        //println!("\n\nObject={:#?}\n\n", optimize_rana);
+        println!(
+            "Number of records for searches made = {:#?}",
+            optimize_rana.searches_made_history.len()
+        );
+
+        println!("\nChecking the validity of metadata...");
+        assert_eq!(
+            *optimize_rana.searches_made_history.last().unwrap(),
+            optimize_rana.total_searches_made
+        );
+
+        assert_eq!(
+            optimize_rana.searches_made_history.len(),
+            optimize_rana.min_max_value_history.len()
+        );
+        assert_eq!(
+            optimize_rana.searches_made_history.len(),
+            optimize_rana.min_max_point_history.len()
+        );
+
+        assert_eq!(optimize_rana.searches_made_history.len() > 0, true);
+
+        println!("All checks run.");
+    }
+
+    #[test]
+    fn test_abc_plotting() {
         //#region
         //Set up problem space bounds
 
@@ -828,7 +1150,7 @@ mod search_algos {
 
         //#endregion
         //Run optimization function here.
-        optimize_rana.classic_abc(
+        optimize_rana.abc(
             &problem_space_bounds,
             1001u64,               //Max number of generations
             benchmark_algos::rana, //name of fitness function
@@ -837,7 +1159,7 @@ mod search_algos {
         println!("\nTime taken ={:?}\n", optimize_rana.real_time_taken);
         //println!("Time taken in seconds ={}",optimize_rana.real_time_taken.as_secs());
 
-        //println!("\n\nObject={:?}\n\n", optimize_rana);
+        //println!("\n\nObject={:#?}\n\n", optimize_rana);
         println!(
             "Number of records for searches made = {:#?}",
             optimize_rana.searches_made_history.len()
@@ -849,11 +1171,32 @@ mod search_algos {
             optimize_rana.total_searches_made
         );
 
+        assert_eq!(
+            optimize_rana.searches_made_history.len(),
+            optimize_rana.min_max_value_history.len()
+        );
+        assert_eq!(
+            optimize_rana.searches_made_history.len(),
+            optimize_rana.min_max_point_history.len()
+        );
+
         println!("All checks run.");
+
+        ///////////////////
+        Optimizer::plot(
+            optimize_rana
+                .searches_made_history
+                .clone()
+                .iter()
+                .map(|x| *x as f64)
+                .collect::<Vec<f64>>(),
+            optimize_rana.min_max_value_history,
+        );
+        //////////////////////////////
     }
 
     #[test]
-    fn test_classic_abc_all() {
+    fn test_abc_all() {
         //#region
         //Set up problem space bounds
 
@@ -890,7 +1233,7 @@ mod search_algos {
 
         //#endregion
         //Run optimization function here.
-        optimize_multiple.classic_abc(
+        optimize_multiple.abc(
             &problem_space_bounds,
             100u64,                //Max number of generations
             benchmark_algos::rana, //name of fitness function
@@ -904,10 +1247,10 @@ mod search_algos {
 
     #[test]
     fn run_code() {
-        assert_eq!(
-            Optimizer::set_bounds(&vec![[-1.0, 1.0]], "[]"),
-            vec![[-1.0, 1.0000000000000002]]
-        );
+        // assert_eq!(
+        //     Optimizer::set_bounds(&vec![[-1.0, 1.0]], "[]"),
+        //     vec![[-1.0, 1.0000000000000002]]
+        // );
         assert_eq!(1.0, 1.0000000000000001); //Shows that there is no difference between 1.0 and 1.0000000000000001
         assert_ne!(1.0, 1.0000000000000002); //shows that there is a difference here. 1.0000000000000002 is truly the smallest number.
 
@@ -922,7 +1265,7 @@ mod search_algos {
     }
 
     #[test]
-    fn test_classic_abc_metadata() {
+    fn test_abc_metadata() {
         //Set up problem space bounds
         let problem_space_bounds = vec![
             [-512.0, 512.0],
@@ -938,7 +1281,7 @@ mod search_algos {
         let mut optimize_rana = Optimizer::new();
 
         //Should work without optional metadata
-        optimize_rana.classic_abc(
+        optimize_rana.abc(
             &problem_space_bounds,
             10u64,                 //Max iterations
             benchmark_algos::rana, //name of fitness function
@@ -947,79 +1290,79 @@ mod search_algos {
     }
 
     #[test]
-    fn test_classic_abc_minimize_flag() {
+    fn test_abc_minimize_flag() {
         //create new instance of struct
         let optimize_rana = Optimizer::new().minimize();
         assert_eq!(optimize_rana.maximize, false); //make sure minimization flag was really applied!
     }
 
-    #[test]
-    fn test_set_bounds() {
-        //#region
-        //Set up problem space bounds
+    // #[test]
+    // fn test_set_bounds() {
+    //     //#region
+    //     //Set up problem space bounds
 
-        let problem_space_bounds = vec![[-512.0, 512.0], [-512.0, 512.0], [-512.0, 512.0]];
+    //     let problem_space_bounds = vec![[-512.0, 512.0], [-512.0, 512.0], [-512.0, 512.0]];
 
-        /*
-        All ranges used for RNG genneration will be the default Rust '..'
-        which are lower-bound inclusive but upper-bound exclusive, aka [lb,ub).
-        For example, 'for i in 0..5 {println!("{}",i)}' Yields 0 1 2 3 4.
-        Thus, for your range:
-        If lower-bound inclusive & upper-bound exclusive, [lb,ub), no action needs to be taken. (Optimzier::set_bounds(input_vec,"[)_or_anything_else"))
-        If lower-bound inclusive & upper-bound inclusive, [lb, ub], add smallest unit to upper bound (use Optimzier::set_bounds(input_vec,"[]"))
-        If lower-bound exclusive & upper-bound inclusive, (lb, ub], add smallest unit to lower AND upper bounds (use Optimzier::set_bounds(input_vec,"(]"))
-        If lower-bound exclusive & upper-bound exclusive, (lb, ub), add smallest unit to lower bound (use Optimzier::set_bounds(input_vec,"()"))
-        */
+    //     /*
+    //     All ranges used for RNG genneration will be the default Rust '..'
+    //     which are lower-bound inclusive but upper-bound exclusive, aka [lb,ub).
+    //     For example, 'for i in 0..5 {println!("{}",i)}' Yields 0 1 2 3 4.
+    //     Thus, for your range:
+    //     If lower-bound inclusive & upper-bound exclusive, [lb,ub), no action needs to be taken. (Optimzier::set_bounds(input_vec,"[)_or_anything_else"))
+    //     If lower-bound inclusive & upper-bound inclusive, [lb, ub], add smallest unit to upper bound (use Optimzier::set_bounds(input_vec,"[]"))
+    //     If lower-bound exclusive & upper-bound inclusive, (lb, ub], add smallest unit to lower AND upper bounds (use Optimzier::set_bounds(input_vec,"(]"))
+    //     If lower-bound exclusive & upper-bound exclusive, (lb, ub), add smallest unit to lower bound (use Optimzier::set_bounds(input_vec,"()"))
+    //     */
 
-        assert_eq!(
-            Optimizer::set_bounds(&problem_space_bounds, "[)"),
-            problem_space_bounds
-        ); //Should have no change
-        assert_eq!(
-            Optimizer::set_bounds(&problem_space_bounds, ""),
-            vec![
-                [-512.0, 512.0000000000001],
-                [-512.0, 512.0000000000001],
-                [-512.0, 512.0000000000001]
-            ]
-        ); //Default is "[]", lower and upper-bound inclusive
-        assert_eq!(
-            Optimizer::set_bounds(&problem_space_bounds, "RandomGibberish"),
-            vec![
-                [-512.0, 512.0000000000001],
-                [-512.0, 512.0000000000001],
-                [-512.0, 512.0000000000001]
-            ]
-        ); //Default is "[]", lower and upper-bound inclusive
-        assert_eq!(
-            Optimizer::set_bounds(&problem_space_bounds, "[]"),
-            vec![
-                [-512.0, 512.0000000000001],
-                [-512.0, 512.0000000000001],
-                [-512.0, 512.0000000000001]
-            ]
-        ); //Add the smallest amount possible to upper bound
-        assert_eq!(
-            Optimizer::set_bounds(&problem_space_bounds, "(]"),
-            vec![
-                [-511.99999999999994, 512.0000000000001],
-                [-511.99999999999994, 512.0000000000001],
-                [-511.99999999999994, 512.0000000000001]
-            ]
-        ); //Add the smallest amount possible to upper bound and lower bound
-        assert_eq!(
-            Optimizer::set_bounds(&problem_space_bounds, "()"),
-            vec![
-                [-511.99999999999994, 512.0],
-                [-511.99999999999994, 512.0],
-                [-511.99999999999994, 512.0]
-            ]
-        ); //Add the smallest amount possible to lower bound only
-    }
+    //     assert_eq!(
+    //         Optimizer::set_bounds(&problem_space_bounds, "[)"),
+    //         problem_space_bounds
+    //     ); //Should have no change
+    //     assert_eq!(
+    //         Optimizer::set_bounds(&problem_space_bounds, ""),
+    //         vec![
+    //             [-512.0, 512.0000000000001],
+    //             [-512.0, 512.0000000000001],
+    //             [-512.0, 512.0000000000001]
+    //         ]
+    //     ); //Default is "[]", lower and upper-bound inclusive
+    //     assert_eq!(
+    //         Optimizer::set_bounds(&problem_space_bounds, "RandomGibberish"),
+    //         vec![
+    //             [-512.0, 512.0000000000001],
+    //             [-512.0, 512.0000000000001],
+    //             [-512.0, 512.0000000000001]
+    //         ]
+    //     ); //Default is "[]", lower and upper-bound inclusive
+    //     assert_eq!(
+    //         Optimizer::set_bounds(&problem_space_bounds, "[]"),
+    //         vec![
+    //             [-512.0, 512.0000000000001],
+    //             [-512.0, 512.0000000000001],
+    //             [-512.0, 512.0000000000001]
+    //         ]
+    //     ); //Add the smallest amount possible to upper bound
+    //     assert_eq!(
+    //         Optimizer::set_bounds(&problem_space_bounds, "(]"),
+    //         vec![
+    //             [-511.99999999999994, 512.0000000000001],
+    //             [-511.99999999999994, 512.0000000000001],
+    //             [-511.99999999999994, 512.0000000000001]
+    //         ]
+    //     ); //Add the smallest amount possible to upper bound and lower bound
+    //     assert_eq!(
+    //         Optimizer::set_bounds(&problem_space_bounds, "()"),
+    //         vec![
+    //             [-511.99999999999994, 512.0],
+    //             [-511.99999999999994, 512.0],
+    //             [-511.99999999999994, 512.0]
+    //         ]
+    //     ); //Add the smallest amount possible to lower bound only
+    // }
 
     #[test]
     #[should_panic]
-    fn test_classic_abc_invalid_options() {
+    fn test_abc_invalid_options() {
         //Set up problem space bounds
         let problem_space_bounds = vec![
             [-512.0, 512.0],
@@ -1036,7 +1379,7 @@ mod search_algos {
 
         optimize_rana.employed_bees = 1;
         //Should panic
-        optimize_rana.classic_abc(
+        optimize_rana.abc(
             &problem_space_bounds,
             100u64,                //Max iterations
             benchmark_algos::rana, //name of fitness function
