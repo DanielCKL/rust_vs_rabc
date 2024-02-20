@@ -10,19 +10,18 @@ use std::env::current_dir;
 use std::fs;
 
 //use std::thread;
-use std::f64::consts;
 use std::thread::available_parallelism;
 use std::time::{Duration, Instant};
 
 #[derive(Default, Debug)]
 pub struct Optimizer {
     //COMPULSORY Optimizer parameters
-    pub max_generations: u64,                //CANNOT be running FOREVER
-    pub problem_space_bounds: Vec<[f64; 2]>, //Cannot possibly be unbounded! Assumed stored as inclusive always [ub,lb]
+    pub max_generations: u64,                //Maximum number of generations that this algorithm will be run for. 
+    pub problem_space_bounds: Vec<[f64; 2]>, //Must be bounded. Assumed stored as inclusive of upper bound (ub) and lower bound (lb): [ub,lb]
 
     //optional parameters
-    pub employed_bees: usize,
-    pub onlooker_bees: usize,
+    pub employed_bees: usize,        //The number of employed bees (and thus the number of food sources/possible solutions that will constantly be searched/exploited).
+    pub onlooker_bees: usize,        //The number of onlooker bees (for every employed bee, there should be 1 onlooker bee)
     pub permanent_scout_bees: usize, //If None (default), will be set by algorithm itself
     maximize: bool,                  //if true, maximize, if false, minimize
     pub local_limit: usize, //Limit for how many times a food source can be exploited before being abandoned.
@@ -55,6 +54,12 @@ pub struct Optimizer {
     pub iter_to_min_max: usize, //Number of iterations that were taken to reach the minimum value.
 
     pub real_time_taken: Duration, //Real time taken. Default of 0.0
+
+    //parameters unique to vs_rabc
+    pub traversal_searches: usize, //how many traversal searches made per random vector generated
+    pub search_distance_factor: f64, //Search distance calculated as a percentage of the largest problem space bound. Default of 10%
+    search_distance: f64,            //actual search distance stored.
+    search_distance_delta: f64,      //how much the search distance is allowed to change by
 }
 
 impl Optimizer {
@@ -108,6 +113,9 @@ impl Optimizer {
             maximize: true,        //default to finding maximum value in input problem space
             min_max_value: f64::NEG_INFINITY,
             thread_pool_size: available_parallelism().unwrap().get(),
+            traversal_searches: 4, //how many traversal searches made per random vector generated
+            search_distance_factor: 0.1,
+            search_distance_delta: 0.1, //how much the search distance is allowed to change by
             ..Default::default()
         }
     }
@@ -184,6 +192,71 @@ impl Optimizer {
         f64::from_bits(next_bits)
     }
 
+    pub fn set_traversal_searches(mut self: Self, mut traversal_searches: usize) -> Self {
+        if traversal_searches < 1 {
+            println!("Warning: Zero value are NOT allowed. Setting traversal_searches to the default of 4");
+            traversal_searches = 4;
+        }
+        self.traversal_searches = traversal_searches;
+        self
+    }
+
+    pub fn set_search_distance_delta(mut self: Self, mut search_distance_delta: f64) -> Self {
+        if search_distance_delta < 0.0 {
+            println!("Warning: Negative values are NOT allowed. Setting search_distance_delta to the default of 0.1");
+            search_distance_delta = 0.1;
+        }
+        self.search_distance_delta = search_distance_delta;
+        self
+    }
+
+    //Set search distance factor (as a fraction of the largest search space range). The default value is 0.1
+    pub fn set_search_distance_factor(mut self: Self, mut search_distance_factor: f64) -> Self {
+        if search_distance_factor < 0.0 {
+            println!("Warning: Negative values are NOT allowed. Setting search_distance_factor to the default of 0.1");
+            search_distance_factor = 0.1;
+        }
+        if search_distance_factor > 1.0 {
+            println!("Warning: Setting this above 1.0 may constantly result in attempts to check the very edge of the problem space. The recommended range is 0<search_distance_factor<1.0");
+        }
+        self.search_distance_factor = search_distance_factor;
+        self
+    }
+
+    //Rank a reference to f64 vector and return a vector with the indices of the vector sorted in DESCENDING order.
+    fn rank_vecf64_desc(input_vec: &Vec<f64>) -> Vec<usize> {
+        let mut input_copy = input_vec.clone();
+
+        let mut output_vec = vec![0usize; input_copy.len()];
+        let mut offset_vec = vec![0usize; input_copy.len()];
+
+        let mut max_index:usize;
+
+        for item in output_vec.iter_mut() {
+        (max_index, _) = input_copy
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.total_cmp(b))
+                .unwrap();
+
+            *item = max_index + offset_vec[max_index];
+
+            //update offset
+            for i in max_index..input_copy.len() {
+                offset_vec[i] += 1;
+            }
+
+            //remove maximum from input_copy and offset_vec to reduce the search
+            input_copy.remove(max_index);
+            offset_vec.remove(max_index);
+        }
+
+        // println!("input_vec= {:?}", input_vec);
+        // println!("output_vec= {:?}", output_vec);
+
+        output_vec
+    }
+
     // vec1 + vec2
     fn add_elementwise(vec1: &Vec<f64>, vec2: &Vec<f64>) -> Vec<f64> {
         let result: Vec<f64> = vec1.iter().zip(vec2.iter()).map(|(a, b)| a + b).collect();
@@ -195,45 +268,16 @@ impl Optimizer {
     // // vec1 - vec2
     fn deduct_elementwise(vec1: &Vec<f64>, vec2: &Vec<f64>) -> Vec<f64> {
         let result: Vec<f64> = vec1.iter().zip(vec2.iter()).map(|(a, b)| a - b).collect();
-        println!("{:?}", result);
+        //println!("{:?}", result);
         result
     }
 
     // // vec1 * vec2
     fn multiply_elementwise(vec1: &Vec<f64>, vec2: &Vec<f64>) -> Vec<f64> {
         let result: Vec<f64> = vec1.iter().zip(vec2.iter()).map(|(a, b)| a * b).collect();
-        println!("{:?}", result);
+        //println!("{:?}", result);
         result
     }
-
-    //set bounds for input to allow them to comply with the default .. data inside.
-    // pub fn set_bounds(input: &Vec<[f64; 2]>, mode: &str) -> Vec<[f64; 2]> {
-    //     if mode == "(]" {
-    //         //(lb,ub]  =>Lower bound exclusive, upper bound inclusive =>Setting = "(]"
-    //         input
-    //             .to_vec()
-    //             .iter()
-    //             .map(|x| [Self::next_up(x[0]), Self::next_up(x[1])])
-    //             .collect()
-    //     } else if mode == "()" {
-    //         //(lb,ub) => Lower bound exclusive, upper bound exclusive =>Setting = "()"
-    //         input
-    //             .to_vec()
-    //             .iter()
-    //             .map(|x| [Self::next_up(x[0]), x[1]])
-    //             .collect()
-    //     } else if mode == "[)" {
-    //         //[lb,ub) =>Lower bound inclusive, upper bound exclusive =>Setting = "[)"
-    //         input.to_vec()
-    //     } else {
-    //         //[lb, ub] => Default: Lower bound inclusive, upper bound inclusive =>Setting = "[]"
-    //         input
-    //             .to_vec()
-    //             .iter()
-    //             .map(|x| [(x[0]), Self::next_up(x[1])])
-    //             .collect()
-    //     }
-    // }
 
     //Taken from https://doc.rust-lang.org/src/core/num/f64.rs.html#740
     fn next_down(val: f64) -> f64 {
@@ -539,14 +583,6 @@ impl Optimizer {
             .collect();
 
         let weighted_selection = WeightedIndex::new(&(*normalized_food_source_values)).unwrap();
-        //TODO: Delete when done, this is an experiment. ////////////////
-        let (max_idx, max_value) = common_reinforcement_vector
-            .iter()
-            .enumerate()
-            .max_by(|(_, a), (_, b)| a.total_cmp(b))
-            .unwrap();
-
-        /////////////////////////////////////////////////////////////////
 
         let d = self.number_of_dimensions as f64;
         //Set onlooker bees based on probability
@@ -1547,6 +1583,19 @@ impl Optimizer {
         self.max_generations = max_generations;
         self.algorithm_name = String::from("abc");
         self.algorithm_description=String::from("Karaboga's classic ABC from https://www.researchgate.net/publication/221498082_Artificial_Bee_Colony_ABC_Optimization_Algorithm_for_Solving_Constrained_Optimization_Problems");
+        //get max value of problem_space_bounds here:
+        let mut vector_of_ranges = vec![];
+        for i in problem_space_bounds.iter() {
+            vector_of_ranges.push((i[0] - i[1]).abs());
+        }
+
+        self.search_distance = self.search_distance_factor
+            * vector_of_ranges
+                .iter()
+                .max_by(|a, b| a.partial_cmp(b).unwrap())
+                .unwrap();
+
+        println!("Running vs_rabc with {:?} traversal searches per random vector, initial search distance of {:?}, and a search distance delta of {:?}",self.traversal_searches, self.search_distance, self.search_distance_delta);
 
         //Ensure that the metadata set does not have an unacceptable value.
         if self.employed_bees < 2 {
@@ -1623,18 +1672,20 @@ impl Optimizer {
         //Scout bee should search randomly at all times, and every time a
         //better solution is found, update to that solution.
 
-        let mut scout_bees_searches =
-            vec![vec![0.0f64; self.number_of_dimensions]; self.permanent_scout_bees];
-        let mut trial_scout_bees_searches =
-            vec![vec![0.0f64; self.number_of_dimensions]; self.permanent_scout_bees];
-        let mut scout_food_sources_values: Vec<f64> =
-            vec![f64::NEG_INFINITY; self.permanent_scout_bees];
+        // let mut scout_bees_searches =
+        //     vec![vec![0.0f64; self.number_of_dimensions]; self.permanent_scout_bees];
+        // let mut trial_scout_bees_searches =
+        //     vec![vec![0.0f64; self.number_of_dimensions]; self.permanent_scout_bees];
+        // let mut scout_food_sources_values: Vec<f64> =
+        //     vec![f64::NEG_INFINITY; self.permanent_scout_bees];
 
         let mut exceeded_max: Vec<usize> = vec![]; //Blank index that will contain (Index of points > max tries, )
         let mut temporary_scout_searches: Vec<Vec<f64>> = vec![];
 
         let mut chosen_dimension_vec = vec![0usize; self.employed_bees];
         let mut onlooker_chosen_dimension_vec = vec![0usize; self.onlooker_bees];
+
+        //Set traversal searches
         //Loop through the algorithm here
         for iteration in 0..self.max_generations {
             self.reinforcement_update_employed_bees(
@@ -1721,56 +1772,6 @@ impl Optimizer {
                 self.onlooker_bees,
             );
 
-            // //Send Scout Bee out on our vector
-            // if self.permanent_scout_bees > 0 {
-            //     //So long as there is 1 or more scout bee:
-            //     //Calculate the euclidean midpoint origin for our vector first
-            //
-
-            //     for k in 0..self.permanent_scout_bees {
-            //         //Generate initial solutions -> randomly reach out with the scout bee
-            //         for (idx, each_dimension) in trial_scout_bees_searches[k].iter_mut().enumerate()
-            //         {
-            //             //for every single dimension
-            //             *each_dimension = random_generator.gen_range::<f64, _>(
-            //                 self.problem_space_bounds[idx][0]..self.problem_space_bounds[idx][1],
-            //             )
-            //             //generate random values within problem space bounds.
-            //         }
-            //     }
-
-            //     //Run searches
-            //     let new_search_vec: Vec<f64> = match self.parallel_mode {
-            //         //Perform search in parallel
-            //         true => thread_pool.install(|| {
-            //             trial_scout_bees_searches
-            //                 .par_iter()
-            //                 .map(|x| minmax_factor * fitness_function(x))
-            //                 .collect()
-            //         }),
-            //         //perform search sequentially
-            //         false => trial_scout_bees_searches
-            //             .iter()
-            //             .map(|x| minmax_factor * fitness_function(x))
-            //             .collect(),
-            //     };
-
-            //     self.update_metadata(
-            //         &food_source_values,
-            //         &employed_bees_searches,
-            //         minmax_factor,
-            //         self.permanent_scout_bees,
-            //     );
-
-            //     //If replace with new value if search result is better. Started with f64::NEG_INFINITY aka update food source
-            //     for (idx, new_search) in new_search_vec.iter().enumerate() {
-            //         if *new_search > scout_food_sources_values[idx] {
-            //             scout_bees_searches[idx] = trial_scout_bees_searches[idx].clone(); //replace with new position if return is higher
-            //             scout_food_sources_values[idx] = *new_search; //replace with new value if return is higher
-            //         }
-            //     }
-            // }
-
             //Check to see if maximum iterations has been reached for any bee
             for (idx, item) in attempts_per_food_source.iter_mut().enumerate() {
                 if *item >= self.local_limit {
@@ -1780,14 +1781,14 @@ impl Optimizer {
 
             //only executed if max_length is exceeded.
             if exceeded_max.len() > 0 {
-                if self.permanent_scout_bees > 0 {
-                    let ts = 4; //TODO: Add this to variables later
-                                //TODO: check the number of food source values that is needed by exceeded_max here first.
-                    let traversals = ((exceeded_max.len() as f64) / (ts as f64)).ceil();
-
+                if self.permanent_scout_bees > 0 {                    
+                    let traversals =
+                        ((exceeded_max.len() as f64) / (self.traversal_searches as f64)).ceil();
+                    println!("traversals={:?}",traversals);
+                    println!("exceeded_max.len()={:?}",exceeded_max.len());
                     //prepare vector to hold list of searches performed beforehand.
                     let mut ts_list: Vec<Vec<f64>> = vec![];
-                    for index1 in 0..(traversals as usize) {
+                    for _index1 in 0..(traversals as usize) {
                         //Get euclidean midpoint for all existing points.
                         let midpoint = Optimizer::euclidean_mid(&employed_bees_searches);
 
@@ -1808,11 +1809,13 @@ impl Optimizer {
 
                         //Calculate size of rand_vector. pdist = ||rand_vector||.
                         let pdist = Optimizer::n_dim_magnitude(&rand_vector);
-                        let SD = 1.0; //TODO: Add this to variables later
 
                         let mut nfood = Optimizer::add_elementwise(
                             &midpoint,
-                            &rand_vector.iter().map(|x| (SD / pdist) * x).collect(),
+                            &rand_vector
+                                .iter()
+                                .map(|x| (self.search_distance / pdist) * x)
+                                .collect(),
                         );
 
                         //Ensure that the point nfood is not outside the limit of the space
@@ -1834,22 +1837,24 @@ impl Optimizer {
                         ////Now, traverse the space between midpoint and nfood
                         //Sample the line between midpoint and ampling it evenly at TS points (Traversal Search points).
 
-                        for i in 1..ts {
+                        for i in 1..self.traversal_searches {
                             ts_list.push(
                                 nfood
                                     .iter()
-                                    .map(|x| x * ((i as f64) / (ts as f64)))
+                                    .map(|x| x * ((i as f64) / (self.traversal_searches as f64)))
                                     .collect(),
                             );
                         }
                         ts_list.push(nfood.clone());
                     }
-                    ts_list.truncate(exceeded_max.len());   //Only take the same number of searches as needed by exceeded_max
+                    ts_list.truncate(exceeded_max.len()); //Only take the same number of searches as needed by exceeded_max
+                                                          //ts_list will hold the list of coordinates that we are supposed to perform searches at
 
                     //Now, perform search for each member in that list.
 
                     //Run searches //New food source values
-                    //Note: new_search_vec's values have been multiplied by minmax_factor
+                    //NOTE: new_search_vec's values have been multiplied by minmax_factor
+                    //This means that you should always try to maximize them
                     let new_search_vec = match self.parallel_mode {
                         //Run searches in parallel
                         true => thread_pool.install(|| {
@@ -1864,68 +1869,76 @@ impl Optimizer {
                             .collect::<Vec<f64>>(),
                     };
 
-                    println!("new_search_vec={:?}", new_search_vec);
+                    //println!("new_search_vec={:?}", new_search_vec);
 
-                    //get max in new_search_vec and then Compare with other food sources.
-                    let (idx, max_search) = new_search_vec
-                        .iter()
-                        .enumerate()
-                        .max_by(|(_, a), (_, b)| a.total_cmp(b))
-                        .unwrap();
+                    //Compare and record how many of the new solutions were better than the median of the old ones.
+                    //Rank index of old solutions in descending numerical order
+                    let mut old_solutions = vec![]; //Assemble a vector of the old solutions that cannot be improved anymore
+                    for i in exceeded_max.iter() {
+                        old_solutions.push(food_source_values[*i]);
+                    }
+                    let rank_vec = Optimizer::rank_vecf64_desc(&old_solutions);
+                    //Now, get the median value
+                    //If the number of solution values is even:
+                    let remainder = rank_vec.len() % 2;
+                    //println!("The number of solution values is: {}", rank_vec.len());
+                    // println!(
+                    //     "The value of that divided by two is: {}",
+                    //     rank_vec.len() / 2
+                    // );
+                    //println!("The value of the remainder is: {}", rank_vec.len() % 2);
+                    let median: f64 = if remainder == 0 {
+                        //if even
+                        (new_search_vec[(rank_vec.len() / 2) - 1]
+                            + new_search_vec[rank_vec.len() / 2])
+                            / 2.0 //use rank to get median values
+                    }
+                    //If the number of solution values is odd:
+                    else {
+                        new_search_vec[rank_vec.len() / 2]
+                    };
 
-                    println!("max={} at index {}", max_search, idx);
-                    println!("out of : {:?}", new_search_vec);
+                    //Now count the number of solutions that were better than the median.
+                    let mut count_of_better = 0;
+                    for item in new_search_vec.iter() {
+                        if *item < median {
+                        }
+                        //if the number of items are less than the median:
+                        else {
+                            count_of_better += 1;
+                        }
+                    }
 
-                    //Now replace the values in exceeded_max with these
+                    //println!("Median={}", median);
+                    //println!("new_search_vec={:?}", new_search_vec);
+                    //println!("Count={}", count_of_better);
+                    //println!("Minmax_factor: {}", minmax_factor);
+                    //If count of results that are better than the median of old searches is greater than or equal to half the number of solution values, MAINTAIN search distance.
+                    //If not, then CHANGE it (randomly increase or decrease with a 50% probability)
+                    if count_of_better < (new_search_vec.len() / 2) {
+                        self.search_distance *= 1.0 - self.search_distance_delta;
+                       
+                        
+                        // //change search distance using delta. 50% probability increase, 50% probability decrease
+                        // if random_generator.gen_bool(0.01) {
+                        //     self.search_distance *= 1.0 + self.search_distance_delta;
+                        // //increase
+                        // } else {
+                        //     self.search_distance *= 1.0 - self.search_distance_delta;
+                        //     //decrease
+                        // }
+                    }
 
-                    // for item in new_search_vec
-                    // {
-                    // *x.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
-                    // }
-                    // println!("\nnfood={:?}",nfood);
-                    // println!("\nts_list={:?}",ts_list);
-                    // println!("Length of the above list = {}",ts_list.len());
-
-                    //Set to upper/lower bounds if max length exceeded
+                    //Now, replace the old search points and values with the new ones.
+                    for (idx, value) in exceeded_max.iter().enumerate()
+                    //for all the indices of the points where limit had been reached
+                    {
+                        employed_bees_searches[*value] = ts_list[idx].clone(); //search point
+                        food_source_values[*value] = new_search_vec[idx]; //corresponding values
+                    }
                 }
 
-                //Update positions with new values from permanent scout bees, and if those are used up, convert inactive employed bees to scout bees temporarily
-                // self.limit_exceeded_update_positions(
-                //     &mut random_generator,
-                //     &mut scout_food_sources_values,
-                //     &mut employed_bees_searches,
-                //     &mut temporary_scout_searches,
-                //     &mut exceeded_max,
-                //     &mut food_source_values,
-                //     &mut scout_bees_searches,
-                //     //&self.problem_space_bounds,
-                // );
-
-                // //To be run only if the number of food sources that exceeded their max limit is greater than the number of permanent scout bees on duty
-                // let temporary_scout_food: Vec<f64> = match self.parallel_mode {
-                //     //run in parallel
-                //     true => thread_pool.install(|| {
-                //         temporary_scout_searches
-                //             .par_iter()
-                //             .map(|x| minmax_factor * fitness_function(x))
-                //             .collect()
-                //     }),
-                //     false => temporary_scout_searches
-                //         .iter()
-                //         .map(|x| minmax_factor * fitness_function(x))
-                //         .collect(),
-                // };
-
-                // for idx in self.permanent_scout_bees..exceeded_max.len() {
-                //     //exceeded_max contains the INDEX values for food_source_values that need to be replaced.
-                //     food_source_values[exceeded_max[idx]] =
-                //         temporary_scout_food[idx - self.permanent_scout_bees]; //Deduct by the offset caused by the permanent_scout_bees
-                //                                                                // println!(
-                //                                                                //     "Replacing with temporary_scout_food number {}",
-                //                                                                //     idx - self.permanent_scout_bees
-                //                                                                // );
-                // }
-
+                //Finally, update metadata here
                 self.update_metadata(
                     &food_source_values,
                     &employed_bees_searches,
@@ -1944,7 +1957,15 @@ impl Optimizer {
     pub fn get_results() {}
 
     //plot of x vs y - Both must be vectors of f64
-    pub fn plot(x: Vec<f64>, y: Vec<f64>, x2: Vec<f64>, y2: Vec<f64>, filename: String) {
+    pub fn plot(
+        x: Vec<f64>,
+        y: Vec<f64>,
+        x2: Vec<f64>,
+        y2: Vec<f64>,
+        x3: Vec<f64>,
+        y3: Vec<f64>,
+        filename: String,
+    ) {
         //println!("{:?}",current_dir().unwrap().as_path());
         let mut mypath = current_dir().unwrap();
         mypath.push("results");
@@ -1961,6 +1982,11 @@ impl Optimizer {
             data2.push((*val, y2[idx]));
         }
 
+        let mut data3: Vec<(f64, f64)> = Vec::new();
+        for (idx, val) in x3.iter().enumerate() {
+            data3.push((*val, y3[idx]));
+        }
+
         //println!("{:?}",data);
         //let data2 = [(1.0, 3.2), (2., 2.2), (3., 1.4), (4., 1.4), (5., 5.5)];
 
@@ -1971,21 +1997,21 @@ impl Optimizer {
 
         let ymax = *y.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
         let ymin = *y.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
-        println!("{}", xmax);
+        // println!("{}", xmax);
 
-        println!("Position={:?}", y.iter().position(|y| *y == ymin).unwrap());
+        // println!("Position={:?}", y.iter().position(|y| *y == ymin).unwrap());
 
         let first_minimum = y.iter().position(|y| *y == ymin).unwrap();
 
-        println!("First value for ymin is {}", y[first_minimum]); //Find position of FIRST element that is the minimum
-        println!(
-            "Number of iterations that it took to get minimum value is {}",
-            x[first_minimum]
-        );
+        // println!("First value for ymin is {}", y[first_minimum]); //Find position of FIRST element that is the minimum
+        // println!(
+        //     "Number of iterations that it took to get minimum value is {}",
+        //     x[first_minimum]
+        // );
 
-        println!("{}", xmin);
-        println!("{}", ymax);
-        println!("{}", ymin);
+        // println!("{}", xmin);
+        // println!("{}", ymax);
+        // println!("{}", ymin);
         //y-axis
         let filename = format!("results/{}", filename.as_str());
         let filename = filename.as_str();
@@ -2015,6 +2041,12 @@ impl Optimizer {
             .unwrap()
             .label("Reinforcement ABC")
             .legend(|(x, y)| Rectangle::new([(x - 15, y + 1), (x, y)], &RED));
+
+        chart_context
+            .draw_series(LineSeries::new(data3, &GREEN))
+            .unwrap()
+            .label("VS-RABC")
+            .legend(|(x, y)| Rectangle::new([(x - 15, y + 1), (x, y)], &GREEN));
         // chart_context.draw_series(LineSeries::new(data2, RED)).unwrap().label("Series 2")
         //     .legend(|(x,y)| Rectangle::new([(x - 15, y + 1), (x, y)], RED));
 
@@ -2333,7 +2365,13 @@ mod search_algos {
         //problem_space_bounds = Optimizer::set_bounds(&problem_space_bounds, "[]");
 
         //create new instance of struct
-        let mut optimize_rana = Optimizer::new().minimize().set_limit(5).set_thread_pool(2); //should strongly recommend user allow the system to decide for them for set_thread_pool
+        let mut optimize_rana = Optimizer::new()
+            .minimize()
+            .set_limit(20)
+            .set_thread_pool(2)
+            .set_traversal_searches(4)
+            .set_search_distance_factor(0.1)
+            .set_search_distance_delta(0.1); //should strongly recommend user allow the system to decide for them for set_thread_pool
 
         //set custom metadata. Should be fine even if it's commented out.
         optimize_rana.fitness_function_name = String::from("rana");
@@ -2354,7 +2392,7 @@ mod search_algos {
         //Run optimization function here.
         optimize_rana.vs_rabc(
             &problem_space_bounds,
-            5u64,                  //Max number of generations
+            35u64,                 //Max number of generations
             benchmark_algos::rana, //name of fitness function
         );
 
@@ -2388,7 +2426,7 @@ mod search_algos {
 
     #[test]
     fn test_abc_plotting() {
-        //#region
+        //#region        
         //Set up problem space bounds
         let dimensionality = 900usize;
         let problem_space_bounds = vec![[-512.0, 512.0]; dimensionality]; //rana
@@ -2398,16 +2436,45 @@ mod search_algos {
 
         //Lower and upper bound inclusive
         //problem_space_bounds = Optimizer::set_bounds(&problem_space_bounds, "[]");
-
+        let traversal_searches = 100;
+        let search_distance_factor = 0.2;
+        let search_distance_delta = 0.1;
         //create new instance of struct
         let mut optimize_rana = Optimizer::new().minimize().set_thread_pool(2); //should strongly recommend user allow the system to decide for them
         let mut optimize_rana_2 = Optimizer::new().minimize().set_thread_pool(2); //should strongly recommend user allow the system to decide for them
+        let mut optimize_rana_3 = Optimizer::new()
+            .minimize()
+            .set_thread_pool(2)
+            .set_traversal_searches(traversal_searches)
+            .set_search_distance_factor(search_distance_factor)
+            .set_search_distance_delta(search_distance_delta); //should strongly recommend user allow the system to decide for them
+
         let mut optimize_rastrigin = Optimizer::new().minimize().set_thread_pool(2); //should strongly recommend user allow the system to decide for them
         let mut optimize_rastrigin_2 = Optimizer::new().minimize().set_thread_pool(2); //should strongly recommend user allow the system to decide for them
+        let mut optimize_rastrigin_3 = Optimizer::new()
+            .minimize()
+            .set_thread_pool(2)
+            .set_traversal_searches(traversal_searches)
+            .set_search_distance_factor(search_distance_factor)
+            .set_search_distance_delta(search_distance_delta); //should strongly recommend user allow the system to decide for them
+
         let mut optimize_rosenbrock = Optimizer::new().minimize().set_thread_pool(2); //should strongly recommend user allow the system to decide for them
         let mut optimize_rosenbrock_2 = Optimizer::new().minimize().set_thread_pool(2); //should strongly recommend user allow the system to decide for them
+        let mut optimize_rosenbrock_3 = Optimizer::new()
+            .minimize()
+            .set_thread_pool(2)
+            .set_traversal_searches(traversal_searches)
+            .set_search_distance_factor(search_distance_factor)
+            .set_search_distance_delta(search_distance_delta); //should strongly recommend user allow the system to decide for them
+
         let mut optimize_schwefel = Optimizer::new().minimize().set_thread_pool(2);
         let mut optimize_schwefel_2 = Optimizer::new().minimize().set_thread_pool(2);
+        let mut optimize_schwefel_3 = Optimizer::new()
+            .minimize()
+            .set_thread_pool(2)
+            .set_traversal_searches(traversal_searches)
+            .set_search_distance_factor(search_distance_factor)
+            .set_search_distance_delta(search_distance_delta);
 
         let total_iterations: u64 = 300;
         // println!(
@@ -2422,12 +2489,19 @@ mod search_algos {
 
         let mut average_optimize_rana = AverageMetadata::new();
         let mut average_optimize_rana2 = AverageMetadata::new();
+        let mut average_optimize_rana3 = AverageMetadata::new();
+
         let mut average_optimize_rastrigin = AverageMetadata::new();
         let mut average_optimize_rastrigin2 = AverageMetadata::new();
+        let mut average_optimize_rastrigin3 = AverageMetadata::new();
+
         let mut average_optimize_rosenbrock = AverageMetadata::new();
         let mut average_optimize_rosenbrock2 = AverageMetadata::new();
+        let mut average_optimize_rosenbrock3 = AverageMetadata::new();
+
         let mut average_optimize_schwefel = AverageMetadata::new();
         let mut average_optimize_schwefel2 = AverageMetadata::new();
+        let mut average_optimize_schwefel3 = AverageMetadata::new();
 
         for i in 0..30 {
             println!("\nCurrently on iteration {i}\n");
@@ -2467,6 +2541,23 @@ mod search_algos {
             );
             optimize_rana_2.clear();
 
+            optimize_rana_3.vs_rabc(
+                &problem_space_bounds,
+                total_iterations,      //Max number of generations
+                benchmark_algos::rana, //name of fitness function
+            );
+
+            average_optimize_rana3.push(
+                &optimize_rana_3
+                    .searches_made_history
+                    .clone()
+                    .iter()
+                    .map(|x| *x as f64)
+                    .collect::<Vec<f64>>(),
+                &optimize_rana_3.min_max_value_history,
+            );
+            optimize_rana_3.clear();
+
             optimize_rastrigin.abc(
                 &problem_space_bounds_2,
                 total_iterations,           //Max number of generations
@@ -2500,6 +2591,23 @@ mod search_algos {
                 &optimize_rastrigin_2.min_max_value_history,
             );
             optimize_rastrigin_2.clear();
+
+            optimize_rastrigin_3.vs_rabc(
+                &problem_space_bounds_2,
+                total_iterations,           //Max number of generations
+                benchmark_algos::rastrigin, //name of fitness function
+            );
+
+            average_optimize_rastrigin3.push(
+                &optimize_rastrigin_3
+                    .searches_made_history
+                    .clone()
+                    .iter()
+                    .map(|x| *x as f64)
+                    .collect::<Vec<f64>>(),
+                &optimize_rastrigin_3.min_max_value_history,
+            );
+            optimize_rastrigin_3.clear();
 
             optimize_rosenbrock.abc(
                 &problem_space_bounds_3,
@@ -2535,7 +2643,24 @@ mod search_algos {
             );
             optimize_rosenbrock_2.clear();
 
-            optimize_schwefel.rabc(
+            optimize_rosenbrock_3.vs_rabc(
+                &problem_space_bounds_3,
+                total_iterations,            //Max number of generations
+                benchmark_algos::rosenbrock, //name of fitness function
+            );
+
+            average_optimize_rosenbrock3.push(
+                &optimize_rosenbrock_3
+                    .searches_made_history
+                    .clone()
+                    .iter()
+                    .map(|x| *x as f64)
+                    .collect::<Vec<f64>>(),
+                &optimize_rosenbrock_3.min_max_value_history,
+            );
+            optimize_rosenbrock_3.clear();
+
+            optimize_schwefel.abc(
                 &problem_space_bounds_4,
                 total_iterations,          //Max number of generations
                 benchmark_algos::schwefel, //name of fitness function
@@ -2568,16 +2693,37 @@ mod search_algos {
                 &optimize_schwefel_2.min_max_value_history,
             );
             optimize_schwefel_2.clear();
+
+            optimize_schwefel_3.vs_rabc(
+                &problem_space_bounds_4,
+                total_iterations,          //Max number of generations
+                benchmark_algos::schwefel, //name of fitness function
+            );
+
+            average_optimize_schwefel3.push(
+                &optimize_schwefel_3
+                    .searches_made_history
+                    .clone()
+                    .iter()
+                    .map(|x| *x as f64)
+                    .collect::<Vec<f64>>(),
+                &optimize_schwefel_3.min_max_value_history,
+            );
+            optimize_schwefel_3.clear();
         }
 
         average_optimize_rana.calculate_average();
         average_optimize_rana2.calculate_average();
+        average_optimize_rana3.calculate_average();
         average_optimize_rastrigin.calculate_average();
         average_optimize_rastrigin2.calculate_average();
+        average_optimize_rastrigin3.calculate_average();
         average_optimize_rosenbrock.calculate_average();
         average_optimize_rosenbrock2.calculate_average();
+        average_optimize_rosenbrock3.calculate_average();
         average_optimize_schwefel.calculate_average();
         average_optimize_schwefel2.calculate_average();
+        average_optimize_schwefel3.calculate_average();
         ///////////////////////////////////////////////////////////////////////////
 
         println!("All checks run.");
@@ -2587,6 +2733,8 @@ mod search_algos {
             average_optimize_rana.min_max_value_history,
             average_optimize_rana2.searches_made_history,
             average_optimize_rana2.min_max_value_history,
+            average_optimize_rana3.searches_made_history,
+            average_optimize_rana3.min_max_value_history,
             String::from("rana_results.svg"),
         );
 
@@ -2595,6 +2743,8 @@ mod search_algos {
             average_optimize_rastrigin.min_max_value_history,
             average_optimize_rastrigin2.searches_made_history,
             average_optimize_rastrigin2.min_max_value_history,
+            average_optimize_rastrigin3.searches_made_history,
+            average_optimize_rastrigin3.min_max_value_history,
             String::from("rastrigin_results.svg"),
         );
 
@@ -2603,6 +2753,8 @@ mod search_algos {
             average_optimize_rosenbrock.min_max_value_history,
             average_optimize_rosenbrock2.searches_made_history,
             average_optimize_rosenbrock2.min_max_value_history,
+            average_optimize_rosenbrock3.searches_made_history,
+            average_optimize_rosenbrock3.min_max_value_history,
             String::from("rosenbrock_results.svg"),
         );
 
@@ -2611,10 +2763,16 @@ mod search_algos {
             average_optimize_schwefel.min_max_value_history,
             average_optimize_schwefel2.searches_made_history,
             average_optimize_schwefel2.min_max_value_history,
+            average_optimize_schwefel3.searches_made_history,
+            average_optimize_schwefel3.min_max_value_history,
             String::from("schwefel_results.svg"),
         );
 
         //////////////////////////////
+        //Alert user that the program has completed
+        println!("\x07");
+        println!("\x07");
+        println!("\x07");
     }
 
     #[test]
