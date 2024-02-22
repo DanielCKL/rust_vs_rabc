@@ -1,3 +1,15 @@
+//!This crate implements a modified version of ABC (VS-RABC) based on my university final year project, which was originally implemented in Python. It demonstrates faster convergence for benchmarks like the Rosenbrock and Rastrigin benchmark functions, and is on par with the other functions for other more elaborate benchmarks. 
+//!
+//!The original method for Karaboga's ABC (<https://www.researchgate.net/publication/221498082_Artificial_Bee_Colony_ABC_Optimization_Algorithm_for_Solving_Constrained_Optimization_Problems>) algorithm is also implemented in Rust here for comparison's sake.
+//!
+//!Also implemented is Reinforcement-Learning ABC, which is based on Fairee et al's paper here: <https://doi.org/10.1371/journal.pone.0200738>
+//! 
+//!To use this crate, you can start by adding it to your : 
+//!``
+//!``` 
+//!
+//!```
+//~
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(non_snake_case)]
@@ -16,8 +28,11 @@ use std::time::{Duration, Instant};
 #[derive(Default, Debug)]
 pub struct Optimizer {
     //COMPULSORY Optimizer parameters
-    pub max_generations: u64,                //Maximum number of generations that this algorithm will be run for. 
-    pub problem_space_bounds: Vec<[f64; 2]>, //Must be bounded. Assumed stored as inclusive of upper bound (ub) and lower bound (lb): [ub,lb]
+    ///Maximum number of generations that this algorithm will be run for
+    pub max_generations: u64,                
+    ///Must be bounded. Assumed stored as inclusive of upper bound (ub) and lower bound (lb): [ub,lb]       
+    pub problem_space_bounds: Vec<[f64; 2]>, 
+
 
     //optional parameters
     pub employed_bees: usize,        //The number of employed bees (and thus the number of food sources/possible solutions that will constantly be searched/exploited).
@@ -26,7 +41,7 @@ pub struct Optimizer {
     maximize: bool,                  //if true, maximize, if false, minimize
     pub local_limit: usize, //Limit for how many times a food source can be exploited before being abandoned.
     thread_pool_size: usize, //size of the thread pool
-    parallel_mode: bool,
+    parallel_mode: bool,    //Enable or disable parallel mode. Defaults to True.
 
     //Problem Space metadata
     //Calculated from length of problem_space_bounds.
@@ -103,6 +118,8 @@ impl Optimizer {
         // results
     }
 
+    ///creates a new instance of the optimizer that can be used for ABC, Reinforcement-ABC, and VS-Reinforcement-ABC. 
+    ///Also sets default parameter values.
     pub fn new() -> Self {
         Self {
             employed_bees: 50usize, //Default values for employed, onlooker, and scout bees as recommended in the source paper.

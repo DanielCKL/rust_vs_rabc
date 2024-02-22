@@ -344,7 +344,7 @@ pub fn schaffer6(v: &Vec<f64>) -> f64 {
     -0.5 - (((sum_all).sin().powi(2) - 0.5) / (1.0 + (0.001 * sum_all.powi(2))).powi(2))
 }
 
-/// Range = `[-500,5500]`
+/// Range = `[-500,500]`
 ///
 /// Multimodal. Global minimum of 0 when xi=(420.9687,420.9687,420.9687,...420.9687) for all xi
 ///
