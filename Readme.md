@@ -29,7 +29,7 @@
        //For example:
     
        Fields that can affect the run:
-         -permanent_scout_bees ()
+         -permanent_scout_bees
        Optional fields that do not affect the run, and that can be added for further reference
          -fitness_function_name
          -fitness_function_description
