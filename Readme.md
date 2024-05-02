@@ -4,7 +4,14 @@
 
 - ABC stands for 'Artificial Bee Colony', a search/optimization algorithm first proposed by Karaboga et al. It is a generalized optimization algorithm that allows us to find the best set of parameters for an optimization problem.
 
-- Faster convergence for benchmarks like the Rosenbrock and Rastrigin benchmark functions, on par with the other functions for other more elaborate benchmarks
+- Faster convergence for benchmarks like the Rosenbrock and Rastrigin benchmark functions:
+  | ![Rosenbrock!](results/rosenbrock_results.svg) |
+  |:--:| 
+  | *Rosenbrock* |
+
+  | ![Rastrigin!](results/rastrigin_results.svg) |
+  |:--:| 
+  | *Rastrigin* |
 
 - The only thing that is necessary is to have a fitness function that outputs datatype f64. This algorithm can search for the best value of your fitness function (it can be an optimization problem or a training model) without any prior knowledge apart from the boundary values of each parameter or dimension.
 
@@ -40,9 +47,9 @@
 - real_time_taken        = The time taken for the algorithm to be run. This is hardware-dependent.
 - searches_made_history  = Recorded number of searches made at each iteration
 - total_searches_made    = The total number of searches made. This is the best overall measure of performance.
-- min_max_value_history  = An 
-- min_max_point_history  =
+- min_max_value_history  = Stores all the minimum/maximum values returned by the problem function for each iteration
+- min_max_point_history  = Stores all the coordinates/parameter values where the minimum/maximum values were recorded for each iteration
 
 # Upcoming Work
-- Add logic to allow early stopping of search based on how long the 
-- Add logic to track average time the algorithm did not find any new minimum (palateuated/stagnated around a local minimum)
+1. Add logic to allow early stopping of search based on how many iterations went by without an improvement in the minimum or maximum value
+2. Add logic to calcualte the average number of iterations that the algorithm did not find any new minimum/maximum (palateuated/stagnated around a local minimum)
