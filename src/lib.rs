@@ -2038,7 +2038,8 @@ impl Optimizer {
         let mut chart_builder = ChartBuilder::on(&drawing_area);
         chart_builder
             .margin(27)
-            .set_left_and_bottom_label_area_size(50);
+            .set_left_and_bottom_label_area_size(50)
+            .caption("Output Value Vs. Number of Searches",("Calibri",22,FontStyle::Normal,&BLACK));
         let mut chart_context = chart_builder
             .build_cartesian_2d(
                 xmin..(xmax + (0.1 * xmax).abs()) as f64,
