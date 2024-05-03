@@ -31,25 +31,31 @@
         .set_thread_pool(2)                        //sets the optimizer to use multiple thread pools in parallel
         .set_traversal_searches(4)                 //Must be an integer 
         .set_search_distance_factor(0.1)           //Represents a fraction of the largest search space range
-        .set_search_distance_delta(0.1);           //Represents percentage change in search distance.
+        .set_search_distance_delta(0.1);           //Represents percentage change in search distance within traversal searches
    
 5. Fill in or set the struct fields to customize the running of its methods. Otherwise, default values will be used.
   
        //For example:
        optimize_rana.known_minimum_value = Some(-3070.2475210);
    
-   Fields that can affect the run:
-   - permanent_scout_bees
-   - employed_bees
-   - onlooker_bees
-   - local_limit
-   - traversal_searches
-   - search_distance_factor
-   Optional fields that do not affect the run, and that can be added for further reference
-   - fitness_function_name
-   - fitness_function_description
-   - known_minimum_value
-   - known_minimum_point
+   Fields that control the algorithm's behavior and can be assigned directly without using the above setter methods:
+   | Field | Behavior controlled |
+   | :--- | :--- |
+   | permanent_scout_bees | The number of scout bees that are permanently assigned to perform random searches in each iteration |
+   | employed_bees | The number of employed bees performing optimization searches around local min/max points |
+   | onlooker_bees | The number of onlooker bees stochastically performing optimization searches with likelihood determined by the local min/max point's value|
+   | local_limit | The limit for how many times a possible min/max can be exploited without any improvement in the solution value |
+   | traversal_searches || Integer value that determines the number of traversal searches (see FYP_Masters.docx for further details) |
+   |  search_distance_factor || Percentage change allowed for search distance within traversal searches |
+   
+   Optional metadata that do not affect the algorithm's behavior:
+   | Metadata Field | Purpose |
+   | :--- | :--- |
+   | fitness_function_name | Name of the fitness function whose problem space we are exploring/searching in to optimize it |
+   | fitness_function_description | Description of the fitness function |
+   | known_minimum_value | Stores the known minimum value if we already know it, for later reference. |
+   | known_minimum_point | Stores the known minimum point(coordinates/set of parameter values) already known. |
+   
 7. Call the optimization algorithm as below:
 
            optimize_rana.vs_rabc(
@@ -60,11 +66,13 @@
                 );
    
 9. The results will be stored in the `Optimizer` object (`optimize_rana`) that we created earlier. To access them, you can use the following fields:
-- real_time_taken        = The time taken for the algorithm to be run. This is hardware-dependent.
-- searches_made_history  = Recorded number of searches made at each iteration
-- total_searches_made    = The total number of searches made. This is the best overall measure of performance.
-- min_max_value_history  = Stores all the minimum/maximum values returned by the problem function for each iteration
-- min_max_point_history  = Stores all the coordinates/parameter values where the minimum/maximum values were recorded for each iteration
+   | Results Field | Purpose |
+   | :--- | :--- |
+   | real_time_taken | The time taken for the algorithm to be run. This is hardware-dependent. |
+   | searches_made_history | Recorded number of searches made at each iteration |
+   | total_searches_made |  The total number of searches made. This is the best overall measure of performance. |
+   | min_max_value_history | All the minimum/maximum values returned by the problem function for each iteration |
+   | min_max_point_history | All the coordinates/parameter values where the minimum/maximum values were recorded for each iteration |
 
 # Upcoming Work
 1. Add logic to allow early stopping of search based on how many iterations went by without an improvement in the minimum or maximum value
