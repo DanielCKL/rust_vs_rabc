@@ -157,6 +157,7 @@ impl Optimizer {
         self.real_time_taken = Duration::new(0, 0);
     }
 
+    //Set the maximum number of 
     pub fn set_limit(mut self: Self, limit: usize) -> Self {
         self.local_limit = limit;
         self
