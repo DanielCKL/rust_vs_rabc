@@ -4,7 +4,11 @@
 
 - ABC stands for 'Artificial Bee Colony', a search/optimization algorithm first proposed by Karaboga et al. It is a generalized optimization algorithm that allows us to find the best set of parameters for an optimization problem.
 
-- Faster convergence for benchmarks like the Rosenbrock and Rastrigin benchmark functions:
+- RABC is 'Reinforcement Artificial Bee Colony', which is the above algorithm with reinforcement-learning techniques added
+
+- VS stands for 'Vector Selection', which is RABC with randomized vectors pointing away from the Euclidean midpoint of our most recent searches (see FYP_Masters.docx for further details). In theory, this would help us escape behavioral sinks, where the searches end up getting trapped around local minima/maxima.
+
+- Proven faster convergence for benchmarks like the Rosenbrock and Rastrigin benchmark functions:
   | ![Rosenbrock!](results/rosenbrock_results.svg) |
   |:--:| 
   | **Rosenbrock** |
