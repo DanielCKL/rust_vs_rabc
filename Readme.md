@@ -80,4 +80,4 @@
 
 # Upcoming Work
 1. Add logic to allow early stopping of search based on how many iterations went by without an improvement in the minimum or maximum value
-2. Add logic to calcualte the average number of iterations that the algorithm did not find any new minimum/maximum (palateuated/stagnated around a local minimum)
+2. Add logic to calculate the average number of iterations that the algorithm did not find any new minimum/maximum (palateuated/stagnated around a local minimum)
