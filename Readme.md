@@ -22,7 +22,7 @@
        rust_vs_rabc = {git ="https://github.com/DanielCKL/rust_vs_rabc",branch="main"}
 
    When building your project for the first time, it will automatically download this project and the necessary dependencies.
-3. Import the library into your project using `use rust_vs_rabc::Optimizer;`. After that, you can use the `Optimizer` struct directly in your code.
+3. Import the crate into your code using `use rust_vs_rabc::Optimizer;` at the top of your .rs file. After that, you can use the `Optimizer` struct directly in your code.
 4. Set up a new instance of the optimizer. Here, we will name this instance 'optimize_rana':
    
        let mut optimize_rana = Optimizer::new()    //new() method sets up default parameter values
