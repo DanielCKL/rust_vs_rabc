@@ -2,7 +2,7 @@
 
 - This is a re-implementation of my Master's Degree final Year Project in Rust (see FYP_Masters.docx for further details).
 
-- ABC stands for 'Artificial Bee Colony', a search/optimization algorithm first proposed by Karaboga et al. It is a generalized optimization algorithm that allows us to find the best set of parameters for an optimization problem.
+- ABC stands for 'Artificial Bee Colony', a search/optimization algorithm first proposed by Karaboga et al. It is a generalized optimization algorithm that allows us to find the best set of parameters for an optimization problem. Its name is an indication of it drawing inspiration from the behavior of honey-bees when they are searching for food sources.
 
 - RABC is 'Reinforcement Artificial Bee Colony', which is the above algorithm with reinforcement-learning techniques added
 
